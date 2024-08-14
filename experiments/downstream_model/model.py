@@ -3,7 +3,8 @@ import pytorch_lightning as pl
 from torch import nn
 from torch_geometric import nn as geom_nn
 from torch.optim import Adam
-
+import os
+from matplotlib import pyplot as plt
 
 class GNNResModel(nn.Module):
     def __init__(self, input_features, edge_features, out_targets, hidden_size, fcn_hidden_dim, embedding_dim,
@@ -74,7 +75,7 @@ class GNNResModel(nn.Module):
 
 
 class GNN(pl.LightningModule):
-    def __init__(self, model_type, model_params, recalc_mae, lr=2e-4):
+    def __init__(self, model_type, model_params, target_dim, recalc_mae, lr=2e-4):
         super().__init__()
         self.save_hyperparameters()
 
@@ -93,12 +94,12 @@ class GNN(pl.LightningModule):
         self.model_type = model_type
         if model_type in ["GCN_tg", "GAT_tg", 'FiLM']:
             self.classifier = nn.Sequential(
-                nn.Linear(model_params['out_channels'], 256),
+                nn.Linear(model_params['out_channels'], model_params['out_channels']),
                 nn.Tanh(),
-                nn.Linear(256, 8)
+                nn.Linear(model_params['out_channels'], target_dim)
             )
 
-        self.loss = nn.MSELoss()
+        self.loss = sid
         self.recal_mae = recalc_mae
 
     def get_embedding(self, x, edge_index, edge_attr):
@@ -114,16 +115,16 @@ class GNN(pl.LightningModule):
             out = self.model(x, edge_index)
             out = geom_nn.global_mean_pool(out, batch)
             out = self.classifier(out)
-
-            return out
         elif self.model_type == 'GAT_tg':
             out = self.model(x, edge_index, edge_attr)
             out = geom_nn.global_mean_pool(out, batch)
             out = self.classifier(out)
-
-            return out
         else:
-            return self.model(x, edge_index, edge_attr, batch)
+            out = self.model(x, edge_index, edge_attr, batch)
+
+        out = 1 / (1 + torch.exp(-out)) # sigmoid function for IR data prediction
+
+        return out
 
     def log_scalar_dict(self, metrics, prefix):
         for k, v in metrics.items():
@@ -150,11 +151,14 @@ class GNN(pl.LightningModule):
 
         self.log('train_loss', loss)
 
-        # Compute MSE for individual targets
-        for i in range(y.shape[1]):
-            self.log(f'train_loss_{i}', self.loss(y[:, i], batch.y[:, i]))
-
-        self.log_maes(batch.y, y, 'train')
+        x_axis = torch.arange(400, 4000, step=4)
+        epoch_dir = os.path.join("train_pics", f"epoch_{self.current_epoch}")
+        os.makedirs(epoch_dir, exist_ok=True)
+        plt.plot(x_axis, y.detach().numpy()[0], color="#E8945A", label="Prediction")
+        plt.plot(x_axis, batch.y.reshape(y.shape)[0], color="#5BB370", label="Ground Truth")
+        plt.legend()
+        plt.savefig(os.path.join(epoch_dir, f"{batch_idx}.png"))
+        plt.close()
 
         return loss
 
@@ -169,12 +173,6 @@ class GNN(pl.LightningModule):
 
         self.log('val_loss', loss)
 
-        # Compute MSE for individual targets
-        for i in range(y.shape[1]):
-            self.log(f'val_loss_{i}', self.loss(y[:, i], batch.y[:, i]))
-
-        self.log_maes(batch.y, y, 'val')
-
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -188,13 +186,22 @@ class GNN(pl.LightningModule):
 
         self.log('test_loss', loss)
 
-        # Compute MSE for individual targets
-        for i in range(y.shape[1]):
-            self.log(f'test_loss_{i}', self.loss(y[:, i], batch.y[:, i]))
-
-        self.log_maes(batch.y, y, 'test')
-
         return loss
 
     def configure_optimizers(self):
         return Adam(self.parameters(), lr=self.hparams.lr)
+
+def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-8, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
+    target_spectra = target_spectra.reshape(model_spectra.shape)
+    
+    # normalize the model spectra before comparison 
+    model_spectra[model_spectra < threshold] = threshold
+    target_spectra[target_spectra < threshold] = threshold
+
+    # calculate loss value
+    loss = torch.mul(torch.log(torch.div(model_spectra,target_spectra)),model_spectra) \
+        + torch.mul(torch.log(torch.div(target_spectra,model_spectra)),target_spectra)
+    loss = torch.sum(loss,axis=1)
+    loss = loss.mean()
+
+    return loss
