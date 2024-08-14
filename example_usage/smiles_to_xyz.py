@@ -8,8 +8,8 @@ from tqdm import tqdm
 
 def convert2xyz(smi):
     path = uuid.uuid4().hex
-    xyz_path = f"{path}.xyz"
-    smi_path = f"{path}.smi"
+    xyz_path = f"data/{path}.xyz"
+    smi_path = f"data/{path}.smi"
 
     with open(smi_path, "w") as f:
         f.write(smi + '\n')
@@ -25,10 +25,10 @@ def convert2xyz(smi):
     return (smi, xyz)
 
 
-all_smiles_splitted = [l.strip() for l in open('smiles.txt', 'r').readlines()]
+all_smiles_splitted = [l.strip() for l in open('data/smiles.txt', 'r').readlines()]
 all_smiles_splitted = [l for l in all_smiles_splitted if l]
 
 xyzs = Parallel(n_jobs=128)(delayed(convert2xyz)(smi) for smi in tqdm(all_smiles_splitted))
 
-with open('xyzs.pkl', 'wb') as f:
+with open('data/xyzs.pkl', 'wb') as f:
     pkl.dump(xyzs, f)

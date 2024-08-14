@@ -11,7 +11,8 @@ from tqdm.autonotebook import tqdm
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from torch.utils.data import random_split
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
+import wandb
 
 from model import GNN
 
@@ -105,7 +106,7 @@ if hparams.sample != 1.0:
     print(f"\tto {len(train)}")
 
 # TODO: SET SHUFFLE BACK TO TRUE!!!!!!
-train_loader = DataLoader(train, batch_size=hparams.bs, shuffle=False, drop_last=True, num_workers=12)
+train_loader = DataLoader(train, batch_size=hparams.bs, shuffle=True, drop_last=True, num_workers=12)
 val_loader = DataLoader(val, batch_size=hparams.bs, num_workers=12)
 test_loader = DataLoader(test, batch_size=hparams.bs, num_workers=12)
 
@@ -125,35 +126,10 @@ else:
 
 model_config['recalc_mae'] = None
 
-# checkpoint_callback_val = ModelCheckpoint(
-#     monitor='val_loss',
-#     filename='best_val_{epoch:02d}-{val_loss:.4f}-{train_loss:.4f}',
-#     save_top_k=5,
-#     mode='min',
-# )
-
-# checkpoint_callback_train = ModelCheckpoint(
-#     monitor='train_loss',
-#     filename='best_train_{epoch:02d}-{val_loss:.4f}-{train_loss:.4f}',
-#     save_top_k=5,
-#     mode='min',
-# )
-
-# checkpoint_callBack_last = ModelCheckpoint(filename='last')
-
-# checkpoint_callback_every_n_epochs = ModelCheckpoint(every_n_epochs=50)
-
 gnn = GNN(**model_config)
-logger = TensorBoardLogger("tb_logs", name="my_model")
-trainer = pl.Trainer.from_argparse_args(hparams, logger=logger, enable_checkpointing=False)
-# trainer = pl.Trainer.from_argparse_args(hparams, callbacks=[checkpoint_callback_train,
-#                                                             checkpoint_callback_val,
-#                                                             checkpoint_callBack_last,
-#                                                             checkpoint_callback_every_n_epochs],
-#                                                 logger=logger)
+# wandb.login()
+# wandb.init(project='simg-ir')
+trainer = pl.Trainer.from_argparse_args(hparams, enable_checkpointing=False)
 trainer.fit(gnn, train_loader, val_loader)
 
 trainer.test(gnn, test_loader)
-
-# def collate_fn(batch):
-#     batch.y = batch.y.reshape()

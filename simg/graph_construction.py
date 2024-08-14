@@ -822,7 +822,7 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
     graph: Data
         The input graph.
     molecular_only: bool, optional
-        Return molecular fraph only.
+        Return molecular graph only.
 
     Returns
     -------
@@ -830,9 +830,9 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
         The downstream graph.
     """
     new_graph = Data()
-    new_graph.qm9_id = graph.qm9_id
+    # new_graph.qm9_id = graph.qm9_id
 
-    new_graph.x = torch.hstack((graph.x, graph.y))
+    new_graph.x = graph.x
     if molecular_only:
         new_graph.x = new_graph.x[graph.is_atom == 1]
 
@@ -867,9 +867,10 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
         new_graph.is_lp = graph.is_lp
         new_graph.is_bond = graph.is_bond
 
-    new_graph.type = graph.type
-    new_graph.normalized_targets = graph.normalized_targets
+    # new_graph.type = graph.type
+    # new_graph.normalized_targets = graph.normalized_targets
     new_graph.symbol = graph.symbol
+    new_graph.y = graph.y
 
     return new_graph
 

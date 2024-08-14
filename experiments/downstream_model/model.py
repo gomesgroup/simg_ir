@@ -5,6 +5,7 @@ from torch_geometric import nn as geom_nn
 from torch.optim import Adam
 import os
 from matplotlib import pyplot as plt
+import wandb
 
 class GNNResModel(nn.Module):
     def __init__(self, input_features, edge_features, out_targets, hidden_size, fcn_hidden_dim, embedding_dim,
@@ -149,7 +150,7 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        self.log('train_loss', loss)
+        # wandb.log({'train_loss': loss})
 
         x_axis = torch.arange(400, 4000, step=4)
         epoch_dir = os.path.join("train_pics", f"epoch_{self.current_epoch}")
@@ -171,7 +172,7 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        self.log('val_loss', loss)
+        # wandb.log({'val_loss': loss})
 
         return loss
 
@@ -184,7 +185,7 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        self.log('test_loss', loss)
+        # wandb.log({'test_loss': loss})
 
         return loss
 
@@ -193,8 +194,8 @@ class GNN(pl.LightningModule):
 
 def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-8, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
     target_spectra = target_spectra.reshape(model_spectra.shape)
-    
-    # normalize the model spectra before comparison 
+
+    # set minimum value
     model_spectra[model_spectra < threshold] = threshold
     target_spectra[target_spectra < threshold] = threshold
 

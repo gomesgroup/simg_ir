@@ -5,7 +5,7 @@ from tqdm import tqdm
 from simg.model_utils import pipeline
 from simg.data import get_connectivity_info
 
-with open('xyzs.pkl', 'rb') as f:
+with open('data/xyzs.pkl', 'rb') as f:
     data = pkl.load(f)
 
 smi, mol = data[0]

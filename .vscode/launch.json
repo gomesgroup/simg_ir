@@ -1,0 +1,24 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {"PYTHONPATH": "${workspaceFolder}"},
+            "args": [
+                "--graphs_path", "outputs/graphs.pt", 
+                "--bs", "128",
+                "--model_config", "experiments/downstream_model/model_config_GCN_tg.yaml",
+                "--from_NBO",
+                "--molecular"
+            ]
+        }
+    ]
+}

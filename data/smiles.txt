@@ -1,0 +1,10 @@
+B1C2CCCC1CCC2
+B1NBNBN1
+B1NC(C2CCCCC2)C(c2ccccc2)(c2ccccc2)O1
+B1OC(c2ccccc2)(c2ccccc2)C2CCCN12
+B1OCC(c2ccccc2)O1
+BC#N
+BC(=O)NCC
+BC=C
+Bc1cc(Cl)ccc1N
+Bc1cc(Cl)ccc1NS(=O)(=O)c1ccc(C(C)(C)C)cc1
