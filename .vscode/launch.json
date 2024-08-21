@@ -14,7 +14,7 @@
             "env": {"PYTHONPATH": "${workspaceFolder}"},
             "args": [
                 "--graphs_path", "outputs/graphs.pt", 
-                "--bs", "128",
+                "--bs", "64",
                 "--model_config", "experiments/downstream_model/model_config_GCN_tg.yaml",
                 "--from_NBO",
                 "--molecular"

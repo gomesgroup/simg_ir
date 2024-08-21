@@ -35,7 +35,7 @@ parser.add_argument("--add_s", type=str, default="", help='Suffix to add to the 
 parser.add_argument("--from_NBO", action="store_true", help='Use NBO targets')
 parser.add_argument("--molecular", action="store_true", help='Transform graphs to molecular')
 
-parser = pl.Trainer.add_argparse_args(parser)
+# parser = pl.Trainer.add_argparse_args(parser)
 hparams = parser.parse_args()
 
 # Check inputs
@@ -78,7 +78,7 @@ for graph in tqdm(data):
             x=torch.FloatTensor(graph.x[:, :17]),
             y=graph.y,
             edge_index=torch.LongTensor(graph.edge_index),
-            edge_attr=torch.FloatTensor(graph.edge_attr),
+            edge_attr=torch.FloatTensor(graph.edge_attr)
         )
     )
 
@@ -106,7 +106,7 @@ if hparams.sample != 1.0:
     print(f"\tto {len(train)}")
 
 # TODO: SET SHUFFLE BACK TO TRUE!!!!!!
-train_loader = DataLoader(train, batch_size=hparams.bs, shuffle=True, drop_last=True, num_workers=12)
+train_loader = DataLoader(train, batch_size=hparams.bs, shuffle=True, drop_last=False, num_workers=12)
 val_loader = DataLoader(val, batch_size=hparams.bs, num_workers=12)
 test_loader = DataLoader(test, batch_size=hparams.bs, num_workers=12)
 
@@ -129,7 +129,8 @@ model_config['recalc_mae'] = None
 gnn = GNN(**model_config)
 # wandb.login()
 # wandb.init(project='simg-ir')
-trainer = pl.Trainer.from_argparse_args(hparams, enable_checkpointing=False)
+gnn.train()
+trainer = pl.Trainer(accelerator='gpu', devices=1)
 trainer.fit(gnn, train_loader, val_loader)
 
 trainer.test(gnn, test_loader)

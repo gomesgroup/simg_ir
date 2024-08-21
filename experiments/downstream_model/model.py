@@ -95,9 +95,9 @@ class GNN(pl.LightningModule):
         self.model_type = model_type
         if model_type in ["GCN_tg", "GAT_tg", 'FiLM']:
             self.classifier = nn.Sequential(
-                nn.Linear(model_params['out_channels'], model_params['out_channels']),
-                nn.Tanh(),
-                nn.Linear(model_params['out_channels'], target_dim)
+                torch.nn.Linear(model_params['out_channels'], model_params['out_channels']),
+                torch.nn.Tanh(),
+                torch.nn.Linear(model_params['out_channels'], target_dim)
             )
 
         self.loss = sid
@@ -112,6 +112,10 @@ class GNN(pl.LightningModule):
         return self.model.get_embedding(x, edge_index, edge_attr)
 
     def forward(self, x, edge_index, edge_attr, batch):
+        x = x.clone().detach().requires_grad_(True)
+        edge_attr.requires_grad = True
+
+
         if self.model_type in ['GCN_tg', 'FiLM']:
             out = self.model(x, edge_index)
             out = geom_nn.global_mean_pool(out, batch)
@@ -123,7 +127,7 @@ class GNN(pl.LightningModule):
         else:
             out = self.model(x, edge_index, edge_attr, batch)
 
-        out = 1 / (1 + torch.exp(-out)) # sigmoid function for IR data prediction
+        out = sigmoid(out)
 
         return out
 
@@ -152,14 +156,15 @@ class GNN(pl.LightningModule):
 
         # wandb.log({'train_loss': loss})
 
-        x_axis = torch.arange(400, 4000, step=4)
-        epoch_dir = os.path.join("train_pics", f"epoch_{self.current_epoch}")
-        os.makedirs(epoch_dir, exist_ok=True)
-        plt.plot(x_axis, y.detach().numpy()[0], color="#E8945A", label="Prediction")
-        plt.plot(x_axis, batch.y.reshape(y.shape)[0], color="#5BB370", label="Ground Truth")
-        plt.legend()
-        plt.savefig(os.path.join(epoch_dir, f"{batch_idx}.png"))
-        plt.close()
+        for i in range(len(y)):
+            x_axis = torch.arange(400, 4000, step=4)
+            epoch_dir = os.path.join("train_pics", f"epoch_{self.current_epoch}")
+            os.makedirs(epoch_dir, exist_ok=True)
+            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+            plt.legend()
+            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
+            plt.close()
 
         return loss
 
@@ -192,10 +197,10 @@ class GNN(pl.LightningModule):
     def configure_optimizers(self):
         return Adam(self.parameters(), lr=self.hparams.lr)
 
-def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-8, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
+def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
     target_spectra = target_spectra.reshape(model_spectra.shape)
 
-    # set minimum value
+    # set limits
     model_spectra[model_spectra < threshold] = threshold
     target_spectra[target_spectra < threshold] = threshold
 
@@ -203,6 +208,14 @@ def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: fl
     loss = torch.mul(torch.log(torch.div(model_spectra,target_spectra)),model_spectra) \
         + torch.mul(torch.log(torch.div(target_spectra,model_spectra)),target_spectra)
     loss = torch.sum(loss,axis=1)
+
     loss = loss.mean()
 
     return loss
+
+
+def sigmoid(x):
+    return 1 / (1 + torch.exp(-x))
+
+def inv_sigmoid(x):
+    return -torch.log((1/x) - 1)
