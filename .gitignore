@@ -165,4 +165,5 @@ wandb
 lightning_logs
 pics
 data/graphs.pts
+data/savoie_dataset.hdf5
 *.ipynb
