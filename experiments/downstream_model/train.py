@@ -3,30 +3,24 @@ import yaml
 import os
 import random
 import logging
-
 import torch
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
 from tqdm.autonotebook import tqdm
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from torch.utils.data import random_split
-from pytorch_lightning.loggers import WandbLogger
+from model import GNN
+from simg.graph_construction import convert_NBO_graph_to_downstream
 import wandb
 
-from model import GNN
-
-from simg.graph_construction import convert_NBO_graph_to_downstream
+wandb.login()
+wandb.init(project='simg-ir')
 
 logging.basicConfig(level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--graphs_path", type=str, help="Path to the PyG graphs")
-parser.add_argument(
-    "--splits_path",
-    type=str,
-    help="Path to the splits. Must contain {train,val,test}.txt files.",
-)
+parser.add_argument( "--splits_path", type=str, help="Path to the splits. Must contain {train,val,test}.txt files.")
 parser.add_argument("--bs", type=int, help="Batch size")
 parser.add_argument("--model_config", type=str, help="Path to the config of the model")
 parser.add_argument("--sample", type=float, default=1.0, help='Do sampling?')
@@ -34,8 +28,6 @@ parser.add_argument("--parts", action="store_true", help='In parts?')
 parser.add_argument("--add_s", type=str, default="", help='Suffix to add to the name')
 parser.add_argument("--from_NBO", action="store_true", help='Use NBO targets')
 parser.add_argument("--molecular", action="store_true", help='Transform graphs to molecular')
-
-# parser = pl.Trainer.add_argparse_args(parser)
 hparams = parser.parse_args()
 
 # Check inputs
@@ -52,39 +44,24 @@ else:
         file.endswith('.pt')
     ], [])
 
-# data = [mol for mol in data if mol.type != 'remove']
-
 if hparams.from_NBO:
     logging.info('Converting to downstream format')
     data = [convert_NBO_graph_to_downstream(graph, molecular_only=hparams.molecular) for graph in tqdm(data)]
 
-# for mol in data:
-#     mol.y = [mol.normalized_targets[i][0] for i in [0, 1, 2, 3, 4, 5, 6, 11]]
-
-# CHEMICAL_ACC_NORMALISING_FACTORS = [0.066513725, 0.012235489, 0.071939046,
-#                                     0.033730778, 0.033486113, 0.004278493,
-#                                     0.001330901, 0.004165489, 0.004128926,
-#                                     0.00409976, 0.004527465, 0.012292586,
-#                                     0.037467458]
-
-# recalc_mae = [CHEMICAL_ACC_NORMALISING_FACTORS[i] for i in [0, 1, 2, 3, 4, 5, 6, 11]]
-
 nice_graphs = []
-
 logging.info('Clean up')
 for graph in tqdm(data):
     nice_graphs.append(
         Data(
             x=torch.FloatTensor(graph.x[:, :17]),
-            y=graph.y,
+            y=torch.FloatTensor(graph.y),
             edge_index=torch.LongTensor(graph.edge_index),
             edge_attr=torch.FloatTensor(graph.edge_attr)
         )
     )
-
 del data
 
-# Set your split ratios
+# set split ratios
 train_ratio = 0.8
 val_ratio = 0.1
 test_ratio = 0.1
@@ -93,26 +70,20 @@ test_ratio = 0.1
 total_size = len(nice_graphs)
 train_size = int(train_ratio * total_size)
 val_size = int(val_ratio * total_size)
-test_size = total_size - train_size - val_size  # to ensure the total size matches
+test_size = total_size - train_size - val_size
+print("Train:\t", train_size)
+print("Val:\t", val_size)
+print("Test:\t", test_size)
 
 # Perform the split
 train, val, test = random_split(nice_graphs, [train_size, val_size, test_size])
-
-print(len(train), len(val), len(test))
-
-if hparams.sample != 1.0:
-    print(f"Reducing from {len(train)}")
-    train = random.sample(train, int(len(train) * hparams.sample))
-    print(f"\tto {len(train)}")
-
-# TODO: SET SHUFFLE BACK TO TRUE!!!!!!
 train_loader = DataLoader(train, batch_size=hparams.bs, shuffle=True, drop_last=False, num_workers=12)
 val_loader = DataLoader(val, batch_size=hparams.bs, num_workers=12)
 test_loader = DataLoader(test, batch_size=hparams.bs, num_workers=12)
 
+# set up model config
 with open(hparams.model_config, "r") as f:
     model_config = yaml.load(f, Loader=yaml.FullLoader)
-
 if (not model_config['model_type'].endswith('_tg')) and model_config['model_type'] != 'FiLM':
     model_config['model_params']['input_features'] = nice_graphs[0].x.shape[1]
     model_config['model_params']['out_targets'] = len(nice_graphs[0].y.shape[1])
@@ -123,13 +94,11 @@ else:
 
     if model_config['model_type'] == 'GAT_tg':
         model_config['model_params']['edge_dim'] = nice_graphs[0].edge_attr.shape[1]
-
 model_config['recalc_mae'] = None
 
+# train and evaluate
 gnn = GNN(**model_config)
-wandb.login()
-wandb.init(project='simg-ir')
 gnn.train()
-trainer = pl.Trainer(accelerator='gpu', devices=1)
+trainer = pl.Trainer(accelerator='gpu', devices=1, enable_checkpointing=False)
 trainer.fit(gnn, train_loader, val_loader)
 trainer.test(gnn, test_loader)
