@@ -88,7 +88,7 @@ class GNN(pl.LightningModule):
         }
 
         if model_type in model_dict:
-            self.model = model_dict[model_type](**model_params)
+            self.model = model_dict[model_type](**model_params, norm='batch')
         else:
             raise ValueError(f'Model type {model_type} not supported')
 
@@ -96,12 +96,26 @@ class GNN(pl.LightningModule):
         if model_type in ["GCN_tg", "GAT_tg", 'FiLM']:
             self.classifier = nn.Sequential(
                 torch.nn.Linear(model_params['out_channels'], model_params['out_channels']),
-                torch.nn.Tanh(),
+                torch.nn.BatchNorm1d(num_features=model_params['out_channels']),
+                torch.nn.ReLU(),
+                torch.nn.Linear(model_params['out_channels'], model_params['out_channels']),
+                torch.nn.BatchNorm1d(num_features=model_params['out_channels']),
+                torch.nn.ReLU(),
+                torch.nn.Linear(model_params['out_channels'], model_params['out_channels']),
+                torch.nn.BatchNorm1d(num_features=model_params['out_channels']),
+                torch.nn.ReLU(),
                 torch.nn.Linear(model_params['out_channels'], target_dim)
             )
 
+            # self.fc1 = nn.Linear(model_params['out_channels'], model_params['out_channels'])
+            # self.bn1 = nn.BatchNorm1d(model_params['out_channels'])
+            # self.relu = nn.ReLU()
+            # self.fc2 = nn.Linear(model_params['out_channels'], model_params['out_channels'])
+            # self.bn2 = nn.BatchNorm1d(input_dim)
+
         self.loss = sid
         self.recal_mae = recalc_mae
+        # self.batch_norm = torch.nn.BatchNorm1d(num_features=target_dim)
 
     def get_embedding(self, x, edge_index, edge_attr):
         if self.model_type in ['GCN_tg', 'FiLM']:
@@ -112,10 +126,6 @@ class GNN(pl.LightningModule):
         return self.model.get_embedding(x, edge_index, edge_attr)
 
     def forward(self, x, edge_index, edge_attr, batch):
-        x = x.clone().detach().requires_grad_(True)
-        edge_attr.requires_grad = True
-
-
         if self.model_type in ['GCN_tg', 'FiLM']:
             out = self.model(x, edge_index)
             out = geom_nn.global_mean_pool(out, batch)
@@ -154,11 +164,11 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        # wandb.log({'train_loss': loss})
+        wandb.log({'train_loss': loss})
 
-        for i in range(len(y)):
+        for i in range(5):
             x_axis = torch.arange(400, 4000, step=4)
-            epoch_dir = os.path.join("train_pics", f"epoch_{self.current_epoch}")
+            epoch_dir = os.path.join("pics/train", f"epoch_{self.current_epoch}")
             os.makedirs(epoch_dir, exist_ok=True)
             plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
             plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
@@ -177,7 +187,17 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        # wandb.log({'val_loss': loss})
+        for i in range(5):
+            x_axis = torch.arange(400, 4000, step=4)
+            epoch_dir = os.path.join("pics/val", f"epoch_{self.current_epoch}")
+            os.makedirs(epoch_dir, exist_ok=True)
+            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+            plt.legend()
+            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
+            plt.close()
+
+        wandb.log({'val_loss': loss})
 
         return loss
 
@@ -190,7 +210,7 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        # wandb.log({'test_loss': loss})
+        wandb.log({'test_loss': loss})
 
         return loss
 
@@ -200,15 +220,17 @@ class GNN(pl.LightningModule):
 def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
     target_spectra = target_spectra.reshape(model_spectra.shape)
 
-    # set limits
+    # # set limits
     model_spectra[model_spectra < threshold] = threshold
     target_spectra[target_spectra < threshold] = threshold
 
-    # calculate loss value
-    loss = torch.mul(torch.log(torch.div(model_spectra,target_spectra)),model_spectra) \
-        + torch.mul(torch.log(torch.div(target_spectra,model_spectra)),target_spectra)
-    loss = torch.sum(loss,axis=1)
+    # option 1: SID
+    loss = torch.mul(torch.log(torch.div(model_spectra,target_spectra)),model_spectra) + torch.mul(torch.log(torch.div(target_spectra,model_spectra)),target_spectra)
 
+    # option 2: MSE
+    # loss = torch.square(target_spectra - model_spectra)
+        
+    loss = torch.sum(loss,axis=1)
     loss = loss.mean()
 
     return loss

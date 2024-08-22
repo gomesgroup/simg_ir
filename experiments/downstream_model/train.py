@@ -127,10 +127,9 @@ else:
 model_config['recalc_mae'] = None
 
 gnn = GNN(**model_config)
-# wandb.login()
-# wandb.init(project='simg-ir')
+wandb.login()
+wandb.init(project='simg-ir')
 gnn.train()
 trainer = pl.Trainer(accelerator='gpu', devices=1)
 trainer.fit(gnn, train_loader, val_loader)
-
 trainer.test(gnn, test_loader)
