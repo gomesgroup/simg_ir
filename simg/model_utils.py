@@ -521,12 +521,13 @@ def get_sdf_block(graph):
 
     return sdf_lines
 
-
 def pipeline(symbols, coordinates, connectivity, threshold=0, use_threshold=True):
     molecular_graph = get_initial_graph(symbols, coordinates, connectivity)
     n_lps, n_conj_lps = predict_lps(molecular_graph)
     graph = get_final_graph(molecular_graph, connectivity, n_lps, n_conj_lps)
     graph = prepare_graph(graph)
     (preds_1, symbol_1, index_1), (a2b_preds, node_preds, int_preds) = make_preds_no_gt(graph, threshold, use_threshold)
+    graph.interaction_targets = torch.FloatTensor(int_preds)
+    graph.a2b_targets = torch.FloatTensor(a2b_preds)
 
     return graph, (n_lps, n_conj_lps), (preds_1, symbol_1, index_1), (a2b_preds, node_preds, int_preds)

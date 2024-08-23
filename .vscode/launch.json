@@ -13,11 +13,10 @@
             "justMyCode": false,
             "env": {"PYTHONPATH": "${workspaceFolder}"},
             "args": [
-                "--graphs_path", "outputs/graphs.pt", 
+                "--graphs_path", "data/graphs.pt", 
                 "--bs", "64",
                 "--model_config", "experiments/downstream_model/model_config_GCN_tg.yaml",
                 "--from_NBO",
-                "--molecular"
             ]
         }
     ]

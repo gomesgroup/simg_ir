@@ -76,7 +76,7 @@ class GNNResModel(nn.Module):
 
 
 class GNN(pl.LightningModule):
-    def __init__(self, model_type, model_params, target_dim, recalc_mae, lr=2e-4):
+    def __init__(self, model_type, model_params, num_ffn_layers, target_dim, recalc_mae, lr=2e-4):
         super().__init__()
         self.save_hyperparameters()
 
@@ -94,28 +94,17 @@ class GNN(pl.LightningModule):
 
         self.model_type = model_type
         if model_type in ["GCN_tg", "GAT_tg", 'FiLM']:
-            self.classifier = nn.Sequential(
-                torch.nn.Linear(model_params['out_channels'], model_params['out_channels']),
-                torch.nn.BatchNorm1d(num_features=model_params['out_channels']),
-                torch.nn.ReLU(),
-                torch.nn.Linear(model_params['out_channels'], model_params['out_channels']),
-                torch.nn.BatchNorm1d(num_features=model_params['out_channels']),
-                torch.nn.ReLU(),
-                torch.nn.Linear(model_params['out_channels'], model_params['out_channels']),
-                torch.nn.BatchNorm1d(num_features=model_params['out_channels']),
-                torch.nn.ReLU(),
-                torch.nn.Linear(model_params['out_channels'], target_dim)
-            )
-
-            # self.fc1 = nn.Linear(model_params['out_channels'], model_params['out_channels'])
-            # self.bn1 = nn.BatchNorm1d(model_params['out_channels'])
-            # self.relu = nn.ReLU()
-            # self.fc2 = nn.Linear(model_params['out_channels'], model_params['out_channels'])
-            # self.bn2 = nn.BatchNorm1d(input_dim)
+            # create feed-forward network
+            ffn_layers = []
+            for _ in range(num_ffn_layers):
+                ffn_layers.append(nn.Linear(model_params['out_channels'], model_params['out_channels']))
+                ffn_layers.append(nn.BatchNorm1d(num_features=model_params['out_channels']))
+                ffn_layers.append(nn.ReLU())
+            ffn_layers.append(nn.Linear(model_params['out_channels'], target_dim))
+            self.ffn = nn.Sequential(*ffn_layers)
 
         self.loss = sid
         self.recal_mae = recalc_mae
-        # self.batch_norm = torch.nn.BatchNorm1d(num_features=target_dim)
 
     def get_embedding(self, x, edge_index, edge_attr):
         if self.model_type in ['GCN_tg', 'FiLM']:
@@ -129,11 +118,11 @@ class GNN(pl.LightningModule):
         if self.model_type in ['GCN_tg', 'FiLM']:
             out = self.model(x, edge_index)
             out = geom_nn.global_mean_pool(out, batch)
-            out = self.classifier(out)
+            out = self.ffn(out)
         elif self.model_type == 'GAT_tg':
             out = self.model(x, edge_index, edge_attr)
             out = geom_nn.global_mean_pool(out, batch)
-            out = self.classifier(out)
+            out = self.ffn(out)
         else:
             out = self.model(x, edge_index, edge_attr, batch)
 
@@ -166,7 +155,7 @@ class GNN(pl.LightningModule):
 
         wandb.log({'train_loss': loss})
 
-        for i in range(5):
+        for i in range(y.shape[0]):
             x_axis = torch.arange(400, 4000, step=4)
             epoch_dir = os.path.join("pics/train", f"epoch_{self.current_epoch}")
             os.makedirs(epoch_dir, exist_ok=True)
@@ -187,7 +176,7 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        for i in range(5):
+        for i in range(y.shape[0]):
             x_axis = torch.arange(400, 4000, step=4)
             epoch_dir = os.path.join("pics/val", f"epoch_{self.current_epoch}")
             os.makedirs(epoch_dir, exist_ok=True)
@@ -238,6 +227,3 @@ def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: fl
 
 def sigmoid(x):
     return 1 / (1 + torch.exp(-x))
-
-def inv_sigmoid(x):
-    return -torch.log((1/x) - 1)

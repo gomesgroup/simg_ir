@@ -830,7 +830,6 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
         The downstream graph.
     """
     new_graph = Data()
-    # new_graph.qm9_id = graph.qm9_id
 
     new_graph.x = graph.x
     if molecular_only:
@@ -851,8 +850,8 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
         new_graph.edge_index = new_graph.edge_index[:, edge_mask]
         new_graph.edge_attr = new_graph.edge_attr[edge_mask]
     else:
-        new_graph.edge_index = torch.hstack((graph.edge_index, graph.a2b_index,
-                                             torch.LongTensor(graph.a2b_index.numpy()[::-1].copy())))
+        new_graph.edge_index = torch.hstack((graph.edge_index, graph.a2b_index.T,
+                                             torch.LongTensor(graph.a2b_index.numpy()[::-1].copy()).T))
         new_graph.edge_index = torch.hstack((new_graph.edge_index,
                                              graph.interaction_edge_index,
                                              torch.LongTensor(graph.interaction_edge_index.numpy()[::-1].copy())))
@@ -862,14 +861,6 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
         new_graph.edge_attr = block_diagonal(new_graph.edge_attr, torch.vstack([graph.interaction_targets] * 2),
                                              new_graph.edge_attr.shape[1] + graph.interaction_targets.shape[1])
 
-    if not molecular_only:
-        new_graph.is_atom = graph.is_atom
-        new_graph.is_lp = graph.is_lp
-        new_graph.is_bond = graph.is_bond
-
-    # new_graph.type = graph.type
-    # new_graph.normalized_targets = graph.normalized_targets
-    new_graph.symbol = graph.symbol
     new_graph.y = graph.y
 
     return new_graph

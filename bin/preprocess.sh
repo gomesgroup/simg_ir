@@ -1,3 +1,4 @@
 source activate nbo
-python data/preprocess.py --size 100
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+python data/preprocess.py --size $1
 conda deactivate

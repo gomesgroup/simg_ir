@@ -61,14 +61,8 @@ def xyz_to_graph(xyzs):
             symbols = [l.split()[0] for l in xyz_data]
             coordinates = np.array([[float(num) for num in l.strip().split()[1:]] for l in xyz_data])
             connectivity = get_connectivity_info(xyz_data)
-            nbo_graph, _, _, _ = pipeline(symbols, coordinates, connectivity)
-
-            # only get the necessary attributes to save on disk space
-            graph = Data(x=nbo_graph.x, 
-                         edge_index=nbo_graph.edge_index,
-                         edge_attr=nbo_graph.edge_attr,
-                         y=nbo_graph.y,
-                         smiles=smi)
+            graph, _, _, _ = pipeline(symbols, coordinates, connectivity)
+            graph.smiles = smi
             graphs.append(graph)
 
     return graphs
