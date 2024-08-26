@@ -15,7 +15,7 @@
             "args": [
                 "--graphs_path", "data/graphs.pt", 
                 "--bs", "64",
-                "--model_config", "experiments/downstream_model/model_config_GCN_tg.yaml",
+                "--model_config", "configs/model_config_GCN_tg.yaml",
                 "--from_NBO",
             ]
         }

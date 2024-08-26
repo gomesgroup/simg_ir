@@ -1,0 +1,24 @@
+{
+    "method": "bayes",
+    "metric": {
+        "name": "best_val_loss_model",
+        "goal": "minimize"
+    },
+    "parameters": {
+        "out_channels": {
+            "distribution": "int_uniform",
+            "min": 32,
+            "max": 4096
+        },
+        "num_layers": {
+            "distribution": "int_uniform",
+            "min": 3,
+            "max": 16
+        },
+        "num_ffn_layers": {
+            "distribution": "int_uniform",
+            "min": 1,
+            "max": 32
+        }
+    }
+}

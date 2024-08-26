@@ -863,6 +863,8 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
 
     new_graph.y = graph.y
 
+    new_graph.smiles = graph.smiles
+
     return new_graph
 
 

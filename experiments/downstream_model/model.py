@@ -6,6 +6,7 @@ from torch.optim import Adam
 import os
 from matplotlib import pyplot as plt
 import wandb
+import torch.distributed as dist
 
 class GNNResModel(nn.Module):
     def __init__(self, input_features, edge_features, out_targets, hidden_size, fcn_hidden_dim, embedding_dim,
@@ -105,6 +106,7 @@ class GNN(pl.LightningModule):
 
         self.loss = sid
         self.recal_mae = recalc_mae
+        self.best_val_loss = None
 
     def get_embedding(self, x, edge_index, edge_attr):
         if self.model_type in ['GCN_tg', 'FiLM']:
@@ -153,17 +155,20 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        wandb.log({'train_loss': loss})
+        if dist.get_rank() == 0:
+            wandb.log({'loss': loss.item()})
 
-        for i in range(y.shape[0]):
-            x_axis = torch.arange(400, 4000, step=4)
-            epoch_dir = os.path.join("pics/train", f"epoch_{self.current_epoch}")
-            os.makedirs(epoch_dir, exist_ok=True)
-            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-            plt.legend()
-            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
-            plt.close()
+        # wandb.log({'train_loss': loss})
+
+        # for i in range(y.shape[0]):
+        #     x_axis = torch.arange(400, 4000, step=4)
+        #     epoch_dir = os.path.join("pics/train", f"epoch_{self.current_epoch}")
+        #     os.makedirs(epoch_dir, exist_ok=True)
+        #     plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+        #     plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+        #     plt.legend()
+        #     plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
+        #     plt.close()
 
         return loss
 
@@ -176,17 +181,21 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        for i in range(y.shape[0]):
-            x_axis = torch.arange(400, 4000, step=4)
-            epoch_dir = os.path.join("pics/val", f"epoch_{self.current_epoch}")
-            os.makedirs(epoch_dir, exist_ok=True)
-            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-            plt.legend()
-            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
-            plt.close()
+        # for i in range(y.shape[0]):
+        #     x_axis = torch.arange(400, 4000, step=4)
+        #     epoch_dir = os.path.join("pics/val", f"epoch_{self.current_epoch}")
+        #     os.makedirs(epoch_dir, exist_ok=True)
+        #     plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+        #     plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+        #     plt.legend()
+        #     plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
+        #     plt.close()
 
         wandb.log({'val_loss': loss})
+
+        if self.best_val_loss is None or loss < self.best_val_loss:
+            self.best_val_loss = loss
+            wandb.log({'best_epoch': self.current_epoch})
 
         return loss
 
@@ -199,6 +208,17 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
+        for i in range(y.shape[0]):
+            x_axis = torch.arange(400, 4000, step=4)
+            epoch_dir = os.path.join("pics/test", wandb.run.name)
+            os.makedirs(epoch_dir, exist_ok=True)
+            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+            plt.title(batch.smiles[i])
+            plt.legend()
+            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
+            plt.close()
+
         wandb.log({'test_loss': loss})
 
         return loss
@@ -209,7 +229,7 @@ class GNN(pl.LightningModule):
 def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
     target_spectra = target_spectra.reshape(model_spectra.shape)
 
-    # # set limits
+    # set limits
     model_spectra[model_spectra < threshold] = threshold
     target_spectra[target_spectra < threshold] = threshold
 

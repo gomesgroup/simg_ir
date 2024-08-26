@@ -17,7 +17,7 @@ def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
         smiles = list(group.keys())
 
         # get random subset of smiles, else get everything
-        if size is not None:
+        if size != -1:
             smiles_samples = random.sample(smiles, size)
         else:
             smiles_samples = smiles
@@ -47,16 +47,15 @@ def convert2xyz(smi):
     return (smi, xyz)
 
 def smiles_to_xyz(smiles):
-    xyzs = Parallel(n_jobs=128)(delayed(convert2xyz)(smi) for smi in tqdm(smiles))
+    xyzs = Parallel(n_jobs=32)(delayed(convert2xyz)(smi) for smi in tqdm(smiles))
+    # xyzs = [convert2xyz(smi) for smi in tqdm(smiles)]
 
     return xyzs
 
 def xyz_to_graph(xyzs):
-    for i in range(0, len(xyzs), 10_000):
-        mols = xyzs[i: i + 10_000]
-        graphs = []
-
-        for smi, mol in tqdm(mols):
+    graphs = []
+    for smi, mol in tqdm(xyzs):
+        try:
             xyz_data = [l + '\n' for l in mol.split('\n')[2:-1]]
             symbols = [l.split()[0] for l in xyz_data]
             coordinates = np.array([[float(num) for num in l.strip().split()[1:]] for l in xyz_data])
@@ -64,16 +63,26 @@ def xyz_to_graph(xyzs):
             graph, _, _, _ = pipeline(symbols, coordinates, connectivity)
             graph.smiles = smi
             graphs.append(graph)
+        except:
+            # skip graphs with errors
+            print("Error while processing SMILES: ", smi)
+            continue
 
     return graphs
 
 def preprocess(size):
+    print("Preparing dataset...")
     data = prepare_savoie(size)
     smiles = list(data.keys())
+    
+    print("Converting SMILES to XYZ...")
     xyzs = smiles_to_xyz(smiles)
+
+    print("Converting XYZ to graphs...")
     graphs = xyz_to_graph(xyzs)
 
     # combine spectrum data
+    print("Combining spectrum ")
     for graph in graphs:
         graph.y = data[graph.smiles]
 
