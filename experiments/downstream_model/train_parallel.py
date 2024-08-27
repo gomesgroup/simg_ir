@@ -10,6 +10,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch_geometric.loader import DataLoader  # Use PyTorch Geometric DataLoader
 from model import GNN, sid
 import wandb
+import gc
+from tqdm import tqdm
 
 def setup_ddp(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -51,34 +53,19 @@ def train(rank, world_size, hparams, config):
             print("Epoch", epoch)
             gnn.train()
             epoch_loss = 0.0
-            for batch in train_loader:
+            for batch in tqdm(train_loader):
                 optimizer.zero_grad()
-
-                print(f"GPU{rank} getting inputs...")
                 x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
-                print(f"GPU{rank} getting inputs finished")
-
-                print(f"GPU{rank} getting targets...")
                 targets = batch.y.to(rank)
-                print(f"GPU{rank} getting targets finished")
-
-                print(f"GPU{rank} forward pass...")
                 outputs = gnn(x, edge_index, edge_attr, batch_ptr)
-                print(f"GPU{rank} forward pass finished")
-
-                print(f"GPU{rank} calculate loss...")
                 loss = sid(model_spectra=outputs, target_spectra=targets)
-                print(f"GPU{rank} calculate loss finished")
-
-                print(f"GPU{rank} calculate gradient...")
                 loss.backward()
-                print(f"GPU{rank} calculate gradient finished")
-
-                print(f"GPU{rank} optimizer step...")
                 optimizer.step()
-                print(f"GPU{rank} optimizer step finished")
-
                 epoch_loss += loss.item()
+
+                del x, edge_index, edge_attr, batch_ptr, targets, outputs, loss
+                torch.cuda.empty_cache()
+                gc.collect()
             
             # Synchronize processes
             dist.barrier()
