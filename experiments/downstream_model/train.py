@@ -120,19 +120,6 @@ from simg.graph_construction import convert_NBO_graph_to_downstream
 import wandb
 
 def main():
-    wandb.init(project='simg-ir', config=wandb.config)
-
-    # set up model config
-    with open(hparams.model_config, "r") as f:
-        model_config = yaml.load(f, Loader=yaml.FullLoader)
-        model_config['model_params']['out_channels'] = wandb.config.out_channels
-        model_config['model_params']['num_layers'] = wandb.config.num_layers
-
-        model_config['recalc_mae'] = None
-
-    # train and evaluate
-    gnn = GNN(**model_config, num_ffn_layers=wandb.config.num_ffn_layers)
-    gnn.train()
     trainer = pl.Trainer(accelerator='gpu', devices=1, strategy="ddp", enable_checkpointing=False, max_epochs=hparams.max_epochs)
     trainer.fit(gnn, train_loader, val_loader)
     trainer.test(gnn, test_loader)
@@ -142,6 +129,7 @@ def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
+    # parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, help="Path to the folder of the split dataset")
     parser.add_argument("--model_config", type=str, help="Path to the config of the model")
@@ -149,6 +137,17 @@ if __name__ == "__main__":
     parser.add_argument("--bs", type=int, help="Batch size")
     hparams = parser.parse_args()
 
+    # set up model
+    with open(hparams.model_config, "r") as f:
+        model_config = yaml.load(f, Loader=yaml.FullLoader)
+        model_config['model_params']['out_channels'] = wandb.config.out_channels
+        model_config['model_params']['num_layers'] = wandb.config.num_layers
+
+        model_config['recalc_mae'] = None
+    gnn = GNN(**model_config, num_ffn_layers=wandb.config.num_ffn_layers)
+    gnn.train()
+
+    # set up data
     train = torch.load(os.path.join(hparams.dataset_dir, "train.pt"))
     val = torch.load(os.path.join(hparams.dataset_dir, "val.pt"))
     test = torch.load(os.path.join(hparams.dataset_dir, "test.pt"))
@@ -157,8 +156,8 @@ if __name__ == "__main__":
     test_loader = DataLoader(test, batch_size=hparams.bs, num_workers=12)
 
     # run wandb sweep
+    wandb.init(project='simg-ir', config=wandb.config)
     with open("configs/sweep_config.json", 'r') as file:
         sweep_config = json.load(file)
-
     sweep_id = wandb.sweep(sweep_config, project="simg_ir")
     wandb.agent(sweep_id, function=main, count=1000)
