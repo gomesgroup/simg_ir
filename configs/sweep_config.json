@@ -5,7 +5,7 @@
         "goal": "minimize"
     },
     "parameters": {
-        "out_channels": {
+        "hidden_channels": {
             "distribution": "int_uniform",
             "min": 32,
             "max": 4096

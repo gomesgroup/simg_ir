@@ -98,10 +98,10 @@ class GNN(pl.LightningModule):
             # create feed-forward network
             ffn_layers = []
             for _ in range(num_ffn_layers):
-                ffn_layers.append(nn.Linear(model_params['out_channels'], model_params['out_channels']))
-                ffn_layers.append(nn.BatchNorm1d(num_features=model_params['out_channels']))
+                ffn_layers.append(nn.Linear(model_params['hidden_channels'], model_params['hidden_channels']))
+                ffn_layers.append(nn.BatchNorm1d(num_features=model_params['hidden_channels']))
                 ffn_layers.append(nn.ReLU())
-            ffn_layers.append(nn.Linear(model_params['out_channels'], target_dim))
+            ffn_layers.append(nn.Linear(model_params['hidden_channels'], target_dim))
             self.ffn = nn.Sequential(*ffn_layers)
 
         self.loss = sid

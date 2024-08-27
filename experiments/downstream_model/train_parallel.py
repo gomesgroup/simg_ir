@@ -28,31 +28,33 @@ def train(rank, world_size, hparams, config):
         if rank == 0:
             wandb.init(project='simg-ir', config=config)
             logging.info("WandB initialized")
-        
+            best_epoch = None
+            best_val_loss = None
+            
         # Set up model
         with open(hparams.model_config, "r") as f:
             model_config = yaml.load(f, Loader=yaml.FullLoader)
-            model_config['model_params']['out_channels'] = config['out_channels']
+            model_config['model_params']['hidden_channels'] = config['hidden_channels']
             model_config['model_params']['num_layers'] = config['num_layers']
             model_config['recalc_mae'] = None
-        
         gnn = GNN(**model_config, num_ffn_layers=config['num_ffn_layers']).to(rank)
         gnn = DDP(gnn, device_ids=[rank])
+        optimizer = torch.optim.Adam(gnn.parameters(), lr=model_config['lr'])
+        # print(gnn)
         
         # Set up data
         train_data = torch.load(os.path.join(hparams.dataset_dir, "train.pt"))
-        val_data = torch.load(os.path.join(hparams.dataset_dir, "val.pt"))
-        
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_data, num_replicas=world_size, rank=rank)
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_data, num_replicas=world_size, rank=rank, shuffle=True)
         train_loader = DataLoader(train_data, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
+        val_data = torch.load(os.path.join(hparams.dataset_dir, "val.pt"))
         val_loader = DataLoader(val_data, batch_size=hparams.bs, num_workers=0)
-        
-        optimizer = torch.optim.Adam(gnn.parameters(), lr=model_config['lr'])
-
+     
+        # training loop
         for epoch in range(hparams.max_epochs):
             print("Epoch", epoch)
+            train_sampler.set_epoch(epoch)
+            
             gnn.train()
-            epoch_loss = 0.0
             for batch in tqdm(train_loader):
                 optimizer.zero_grad()
                 x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
@@ -61,8 +63,11 @@ def train(rank, world_size, hparams, config):
                 loss = sid(model_spectra=outputs, target_spectra=targets)
                 loss.backward()
                 optimizer.step()
-                epoch_loss += loss.item()
 
+                if rank == 0:
+                    wandb.log({"train_loss": loss})
+
+                # clean up memory
                 del x, edge_index, edge_attr, batch_ptr, targets, outputs, loss
                 torch.cuda.empty_cache()
                 gc.collect()
@@ -70,11 +75,12 @@ def train(rank, world_size, hparams, config):
             # Synchronize processes
             dist.barrier()
 
-            # Validation step on rank 0
+            # Validation step w/o parallelization
             if rank == 0:
                 print("Evaluating...")
-                gnn.eval()
                 val_loss = 0.0
+
+                gnn.eval()
                 with torch.no_grad():
                     for batch in val_loader:
                         x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
@@ -82,15 +88,27 @@ def train(rank, world_size, hparams, config):
                         outputs = gnn(x, edge_index, edge_attr, batch_ptr)
                         loss = sid(model_spectra=outputs, target_spectra=targets)
                         val_loss += loss.item()
+
+                        # clean up memory
+                        del x, edge_index, edge_attr, batch_ptr, targets, outputs, loss
+                        torch.cuda.empty_cache()
+                        gc.collect()
                 
-                avg_train_loss = epoch_loss / len(train_loader)
                 avg_val_loss = val_loss / len(val_loader)
-                wandb.log({"epoch": epoch, "train_loss": avg_train_loss, "val_loss": avg_val_loss})
-                logging.info(f"Epoch {epoch}: Train Loss: {avg_train_loss}, Val Loss: {avg_val_loss}")
+                if best_val_loss is None or avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    best_epoch = epoch
+
+                wandb.log({"epoch": epoch, "val_loss": avg_val_loss, "best_epoch": best_epoch})
+
+        # report sweep objective
+        if rank == 0:
+            wandb.log({"best_val_loss": best_val_loss})
 
         # Clean up the process group
         dist.destroy_process_group()
-    except:
+    except Exception as e:
+        print(e)
         dist.destroy_process_group()
 
 def main():
@@ -117,7 +135,7 @@ def main():
         # Initialize WandB and get config
         wandb.init()
         config = {
-            'out_channels': wandb.config.out_channels,
+            'hidden_channels': wandb.config.hidden_channels,
             'num_layers': wandb.config.num_layers,
             'num_ffn_layers': wandb.config.num_ffn_layers,
         }
