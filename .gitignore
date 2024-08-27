@@ -166,6 +166,7 @@ lightning_logs
 pics
 data/graphs.pt
 data/savoie_dataset.hdf5
+data/dataset/
 *.ipynb
 nohup.out
 *.smi
