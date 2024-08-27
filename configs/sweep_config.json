@@ -1,7 +1,7 @@
 {
     "method": "bayes",
     "metric": {
-        "name": "best_val_loss_model",
+        "name": "best_val_loss",
         "goal": "minimize"
     },
     "parameters": {
