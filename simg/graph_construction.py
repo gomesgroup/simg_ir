@@ -841,14 +841,14 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
 
     if molecular_only:
         new_graph.edge_index = graph.edge_index
-        new_graph.edge_attr = graph.edge_attr
+        # new_graph.edge_attr = graph.edge_attr
 
         # Create mask for edges that are between atoms only
         edge_mask = torch.zeros(new_graph.edge_index.shape[1], dtype=torch.bool)
         edge_mask[graph.is_atom[new_graph.edge_index[0]].bool() & graph.is_atom[new_graph.edge_index[1]].bool()] = True
 
         new_graph.edge_index = new_graph.edge_index[:, edge_mask]
-        new_graph.edge_attr = new_graph.edge_attr[edge_mask]
+        # new_graph.edge_attr = new_graph.edge_attr[edge_mask]
     else:
         new_graph.edge_index = torch.hstack((graph.edge_index, graph.a2b_index.T,
                                              torch.LongTensor(graph.a2b_index.numpy()[::-1].copy()).T))
@@ -856,10 +856,10 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
                                              graph.interaction_edge_index,
                                              torch.LongTensor(graph.interaction_edge_index.numpy()[::-1].copy())))
 
-        new_graph.edge_attr = block_diagonal(graph.edge_attr, torch.vstack([graph.a2b_targets] * 2),
-                                             graph.edge_attr.shape[1] + graph.a2b_targets.shape[1])
-        new_graph.edge_attr = block_diagonal(new_graph.edge_attr, torch.vstack([graph.interaction_targets] * 2),
-                                             new_graph.edge_attr.shape[1] + graph.interaction_targets.shape[1])
+        # new_graph.edge_attr = block_diagonal(graph.edge_attr, torch.vstack([graph.a2b_targets] * 2),
+        #                                      graph.edge_attr.shape[1] + graph.a2b_targets.shape[1])
+        # new_graph.edge_attr = block_diagonal(new_graph.edge_attr, torch.vstack([graph.interaction_targets] * 2),
+        #                                      new_graph.edge_attr.shape[1] + graph.interaction_targets.shape[1])
 
     new_graph.y = graph.y
 

@@ -164,7 +164,7 @@ cython_debug/
 wandb
 lightning_logs
 pics
-data/graphs.pt
+*.pt
 data/savoie_dataset.hdf5
 data/dataset/
 *.ipynb

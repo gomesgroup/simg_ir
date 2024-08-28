@@ -46,27 +46,29 @@ def convert2xyz(smi):
 
     return (smi, xyz)
 
+def convert2graph(xyz):
+    smi, mol = xyz
+    try:
+        xyz_data = [l + '\n' for l in mol.split('\n')[2:-1]]
+        symbols = [l.split()[0] for l in xyz_data]
+        coordinates = np.array([[float(num) for num in l.strip().split()[1:]] for l in xyz_data])
+        connectivity = get_connectivity_info(xyz_data)
+        graph, _, _, _ = pipeline(symbols, coordinates, connectivity)
+        graph.smiles = smi
+
+        return graph
+    except:
+        # skip graphs with errors
+        print("Error while processing SMILES: ", smi)
+
 def smiles_to_xyz(smiles):
     xyzs = Parallel(n_jobs=32)(delayed(convert2xyz)(smi) for smi in tqdm(smiles))
-    # xyzs = [convert2xyz(smi) for smi in tqdm(smiles)]
 
     return xyzs
 
 def xyz_to_graph(xyzs):
-    graphs = []
-    for smi, mol in tqdm(xyzs):
-        try:
-            xyz_data = [l + '\n' for l in mol.split('\n')[2:-1]]
-            symbols = [l.split()[0] for l in xyz_data]
-            coordinates = np.array([[float(num) for num in l.strip().split()[1:]] for l in xyz_data])
-            connectivity = get_connectivity_info(xyz_data)
-            graph, _, _, _ = pipeline(symbols, coordinates, connectivity)
-            graph.smiles = smi
-            graphs.append(graph)
-        except:
-            # skip graphs with errors
-            print("Error while processing SMILES: ", smi)
-            continue
+    graphs = Parallel(n_jobs=32)(delayed(convert2graph)(xyz) for xyz in tqdm(xyzs))
+    graphs = [graph for graph in graphs if graph is not None]
 
     return graphs
 

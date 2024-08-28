@@ -7,6 +7,7 @@ import logging
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader  # Use PyTorch Geometric DataLoader
 from model import GNN, sid
 import wandb
@@ -43,12 +44,24 @@ def train(rank, world_size, hparams, config):
         # print(gnn)
         
         # Set up data
-        train_data = torch.load(os.path.join(hparams.dataset_dir, "train.pt"))
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_data, num_replicas=world_size, rank=rank, shuffle=True)
-        train_loader = DataLoader(train_data, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
-        val_data = torch.load(os.path.join(hparams.dataset_dir, "val.pt"))
-        val_loader = DataLoader(val_data, batch_size=hparams.bs, num_workers=0)
-     
+        graphs = torch.load(os.path.join(hparams.graphs_path))
+
+        train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"))
+        train_subset = Subset(graphs, train_indices)
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_subset, num_replicas=world_size, rank=rank, shuffle=True)
+        train_loader = DataLoader(val_subset, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
+        
+        val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
+        val_subset = Subset(graphs, val_indices)
+        val_loader = DataLoader(val_subset, batch_size=hparams.bs, num_workers=0)
+
+        # del nice_graphs  
+        # del train_indices
+        # del val_indices
+        # del train_subset 
+        # del val_subset    
+        # gc.collect()
+
         # training loop
         for epoch in range(hparams.max_epochs):
             print("Epoch", epoch)
@@ -116,7 +129,9 @@ def main():
     
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_dir", type=str, help="Path to the folder of the split dataset")
+    parser.add_argument("--graphs_path", type=str, help="Path to the PyG graphs")
+
+    parser.add_argument("--split_dir", type=str, help="Path to the folder of the split dataset")
     parser.add_argument("--model_config", type=str, help="Path to the config of the model")
     parser.add_argument("--max_epochs", type=int, help="Maximum number of training epochs")
     parser.add_argument("--bs", type=int, help="Batch size")
