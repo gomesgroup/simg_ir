@@ -1,6 +1,7 @@
 import os
 import h5py
 import uuid
+import torch
 import random
 import numpy as np
 from tqdm import tqdm
@@ -8,6 +9,8 @@ from joblib import Parallel, delayed
 from torch_geometric.data import Data
 from simg.model_utils import pipeline
 from simg.data import get_connectivity_info
+from simg.graph_construction import convert_NBO_graph_to_downstream
+from functools import partial
 
 def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
     data = {}
@@ -57,9 +60,11 @@ def convert2graph(xyz):
         graph.smiles = smi
 
         return graph
-    except:
+    except Exception as e:
         # skip graphs with errors
         print("Error while processing SMILES: ", smi)
+        print(e)
+
 
 def smiles_to_xyz(smiles):
     xyzs = Parallel(n_jobs=32)(delayed(convert2xyz)(smi) for smi in tqdm(smiles))
@@ -68,13 +73,18 @@ def smiles_to_xyz(smiles):
 
 def xyz_to_graph(xyzs):
     graphs = Parallel(n_jobs=32)(delayed(convert2graph)(xyz) for xyz in tqdm(xyzs))
-    graphs = [graph for graph in graphs if graph is not None]
+    graphs = [graph for graph in graphs if graph is not None] # remove None types
 
     return graphs
 
-def preprocess(size):
+def graph_to_NBO(graphs, molecular_only):
+    nbo_graphs = Parallel(n_jobs=32)(delayed(partial(convert_NBO_graph_to_downstream, molecular_only=molecular_only))(graph) for graph in tqdm(graphs))
+
+    return nbo_graphs
+
+def preprocess(args):
     print("Preparing dataset...")
-    data = prepare_savoie(size)
+    data = prepare_savoie(args.size)
     smiles = list(data.keys())
     
     print("Converting SMILES to XYZ...")
@@ -83,9 +93,21 @@ def preprocess(size):
     print("Converting XYZ to graphs...")
     graphs = xyz_to_graph(xyzs)
 
-    # combine spectrum data
-    print("Combining spectrum ")
-    for graph in graphs:
-        graph.y = data[graph.smiles]
+    if args.from_NBO:
+        print('Converting to downstream format...')
+        graphs = graph_to_NBO(graphs, args.molecular)
+        
+    print('Cleaning up and combining spectrum...')
+    clean_graphs = []
+    for graph in tqdm(graphs):
+        clean_graphs.append(
+            Data(
+                x=torch.FloatTensor(graph.x),
+                edge_index=torch.LongTensor(graph.edge_index),
+                edge_attr=torch.FloatTensor(graph.edge_attr),
+                smiles=graph.smiles,
+                y=data[graph.smiles]
+            )
+        )
 
-    return graphs
+    return clean_graphs

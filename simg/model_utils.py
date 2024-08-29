@@ -398,18 +398,18 @@ def make_preds_no_gt(data, threshold=0, use_threshold=True):
     xyz_data, vector_data = data.xyz_data, data.vector_data
     a2b_index = data.a2b_index
 
-    logging.info('Started indexing. Might take a while for big molecules')
+    # logging.info('Started indexing. Might take a while for big molecules')
     interaction_edge_index = [[i, j] for i in range(len(x)) for j in range(len(x))]
     interaction_edge_index = torch.LongTensor(interaction_edge_index).T
 
-    logging.info('Started making predictions')
+    # logging.info('Started making predictions')
     with torch.no_grad():
         preds, a2b_preds, node_preds, int_preds, intermediate, intermediate_pred = gnn.forward(
             x, edge_index, edge_attr, data.interaction_edge_index, interaction_edge_index,
             xyz_data, vector_data, a2b_index
         )
 
-    logging.info('Finished making predictions')
+    # logging.info('Finished making predictions')
 
     preds = torch.sigmoid(preds.reshape((len(x), len(x)))).cpu().detach().numpy()
 
@@ -427,14 +427,14 @@ def make_preds_no_gt(data, threshold=0, use_threshold=True):
         orbital_interactions = np.concatenate((row_idx[:, None], col_idx[:, None]), axis=1) + n_atoms
 
         if np.shape(orbital_interactions)[0] > 1000:
-            logging.info('Too many interactions, might take a while to process')
+            # logging.info('Too many interactions, might take a while to process')
             # divide orbital interactions into chunks of size 500
             chunks = np.array_split(orbital_interactions, np.shape(orbital_interactions)[0] // 500)
 
             def get_int_idx(chunk):
                 return np.where((all_idx[:, None] == chunk).all(axis=2))[0]
 
-            int_idx = Parallel(n_jobs=4)(delayed(get_int_idx)(chunk) for chunk in tqdm(chunks))
+            int_idx = Parallel(n_jobs=4)(delayed(get_int_idx)(chunk) for chunk in chunks)
             int_idx = np.concatenate(int_idx)
 
         else:

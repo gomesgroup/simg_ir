@@ -356,7 +356,7 @@ class GNNModel(nn.Module):
 
         if use_gnn:
             if baseline_gnn is None:
-                print('Using full GNN model')
+                # print('Using full GNN model')
 
                 all_hss = 0
 
@@ -397,7 +397,7 @@ class GNNModel(nn.Module):
                 print('Using only last GNN layer')
                 fcn_input_dim = gnn_output_dim
             else:
-                print('Stacking all GNN layer outputs')
+                # print('Stacking all GNN layer outputs')
                 fcn_input_dim = N_ATOM_FEATURES + N_LP_FEATURES + N_BOND_FEATURES + all_hss
         else:
             fcn_input_dim = N_ATOM_FEATURES + N_LP_FEATURES + N_BOND_FEATURES

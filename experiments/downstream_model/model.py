@@ -116,17 +116,10 @@ class GNN(pl.LightningModule):
 
         return self.model.get_embedding(x, edge_index, edge_attr)
 
-    def forward(self, x, edge_index, edge_attr, batch):
-        if self.model_type in ['GCN_tg', 'FiLM']:
-            out = self.model(x, edge_index)
-            out = geom_nn.global_mean_pool(out, batch)
-            out = self.ffn(out)
-        elif self.model_type == 'GAT_tg':
-            out = self.model(x, edge_index, edge_attr)
-            out = geom_nn.global_mean_pool(out, batch)
-            out = self.ffn(out)
-        else:
-            out = self.model(x, edge_index, edge_attr, batch)
+    def forward(self, x, edge_index, batch):
+        out = self.model(x, edge_index)
+        out = geom_nn.global_mean_pool(out, batch)
+        out = self.ffn(out)
 
         out = sigmoid(out)
 

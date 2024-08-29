@@ -20,7 +20,7 @@ def setup_ddp(rank, world_size):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
-def train(rank, world_size, hparams, config):
+def train(rank, world_size, hparams, config, train_subset, val_subset):
     try:
         # Setup DDP environment
         setup_ddp(rank, world_size)
@@ -44,23 +44,9 @@ def train(rank, world_size, hparams, config):
         # print(gnn)
         
         # Set up data
-        graphs = torch.load(os.path.join(hparams.graphs_path))
-
-        train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"))
-        train_subset = Subset(graphs, train_indices)
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_subset, num_replicas=world_size, rank=rank, shuffle=True)
         train_loader = DataLoader(val_subset, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
-        
-        val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
-        val_subset = Subset(graphs, val_indices)
         val_loader = DataLoader(val_subset, batch_size=hparams.bs, num_workers=0)
-
-        # del nice_graphs  
-        # del train_indices
-        # del val_indices
-        # del train_subset 
-        # del val_subset    
-        # gc.collect()
 
         # training loop
         for epoch in range(hparams.max_epochs):
@@ -70,7 +56,7 @@ def train(rank, world_size, hparams, config):
             gnn.train()
             for batch in tqdm(train_loader):
                 optimizer.zero_grad()
-                x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
+                x, edge_index, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.batch.to(rank)
                 targets = batch.y.to(rank)
                 outputs = gnn(x, edge_index, edge_attr, batch_ptr)
                 loss = sid(model_spectra=outputs, target_spectra=targets)
@@ -145,7 +131,24 @@ def main():
     
     # Start the sweep
     world_size = torch.cuda.device_count()
+
+    graphs = torch.load(os.path.join(hparams.graphs_path))
+    for data in tqdm(graphs):
+        data.x.share_memory_()
+        data.edge_index.share_memory_()
+        data.y.share_memory_()
+
+    train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"))
+    train_subset = Subset(graphs, train_indices)
     
+    val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
+    val_subset = Subset(graphs, val_indices)
+
+    del graphs  
+    del train_indices
+    del val_indices
+    gc.collect()
+
     def train_wrapper():
         # Initialize WandB and get config
         wandb.init()
@@ -154,7 +157,8 @@ def main():
             'num_layers': wandb.config.num_layers,
             'num_ffn_layers': wandb.config.num_ffn_layers,
         }
-        mp.spawn(train, args=(world_size, hparams, config), nprocs=world_size, join=True)
+
+        mp.spawn(train, args=(world_size, hparams, config, train_subset, val_subset), nprocs=world_size, join=True)
     
     wandb.agent(sweep_id, function=train_wrapper, count=1000)
 
