@@ -116,10 +116,17 @@ class GNN(pl.LightningModule):
 
         return self.model.get_embedding(x, edge_index, edge_attr)
 
-    def forward(self, x, edge_index, batch):
-        out = self.model(x, edge_index)
-        out = geom_nn.global_mean_pool(out, batch)
-        out = self.ffn(out)
+    def forward(self, x, edge_index, edge_attr, batch):
+        if self.model_type in ['GCN_tg', 'FiLM']:
+            out = self.model(x, edge_index)
+            out = geom_nn.global_mean_pool(out, batch)
+            out = self.ffn(out)
+        elif self.model_type == 'GAT_tg':
+            out = self.model(x, edge_index, edge_attr)
+            out = geom_nn.global_mean_pool(out, batch)
+            out = self.ffn(out)
+        else:
+            out = self.model(x, edge_index, edge_attr, batch)
 
         out = sigmoid(out)
 
@@ -148,9 +155,6 @@ class GNN(pl.LightningModule):
             y, batch.y
         )
 
-        if dist.get_rank() == 0:
-            wandb.log({'loss': loss.item()})
-
         # wandb.log({'train_loss': loss})
 
         # for i in range(y.shape[0]):
@@ -162,6 +166,8 @@ class GNN(pl.LightningModule):
         #     plt.legend()
         #     plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
         #     plt.close()
+
+        print("Train loss: ", loss.item())
 
         return loss
 
@@ -184,11 +190,13 @@ class GNN(pl.LightningModule):
         #     plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
         #     plt.close()
 
-        wandb.log({'val_loss': loss})
+        # wandb.log({'val_loss': loss})
 
-        if self.best_val_loss is None or loss < self.best_val_loss:
-            self.best_val_loss = loss
-            wandb.log({'best_epoch': self.current_epoch})
+        # if self.best_val_loss is None or loss < self.best_val_loss:
+        #     self.best_val_loss = loss
+        #     wandb.log({'best_epoch': self.current_epoch})
+
+        print("Val loss: ", loss.item())
 
         return loss
 
@@ -212,7 +220,7 @@ class GNN(pl.LightningModule):
             plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
             plt.close()
 
-        wandb.log({'test_loss': loss})
+        # wandb.log({'test_loss': loss})
 
         return loss
 
@@ -226,10 +234,10 @@ def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: fl
     model_spectra[model_spectra < threshold] = threshold
     target_spectra[target_spectra < threshold] = threshold
 
-    # option 1: SID
+    # option 1: SID loss
     loss = torch.mul(torch.log(torch.div(model_spectra,target_spectra)),model_spectra) + torch.mul(torch.log(torch.div(target_spectra,model_spectra)),target_spectra)
 
-    # option 2: MSE
+    # option 2: MSE loss
     # loss = torch.square(target_spectra - model_spectra)
         
     loss = torch.sum(loss,axis=1)

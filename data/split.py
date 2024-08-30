@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--train_ratio", type=float, help="Ratio of dataset for training")
     parser.add_argument("--val_ratio", type=float, help="Ratio of dataset for validation")
-    parser.add_argument("--test_ratio", type=float, help="Ratio of dataset for testing")
+    parser.add_argument("--test_ratio", type=float, help="Ratio of dataset for testing") 
     hparams = parser.parse_args()
 
     nice_graphs = torch.load(hparams.graphs_path)

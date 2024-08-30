@@ -106,7 +106,7 @@ def preprocess(args):
                 edge_index=torch.LongTensor(graph.edge_index),
                 edge_attr=torch.FloatTensor(graph.edge_attr),
                 smiles=graph.smiles,
-                y=data[graph.smiles]
+                y=torch.FloatTensor(data[graph.smiles])
             )
         )
 

@@ -13,6 +13,7 @@ from model import GNN, sid
 import wandb
 import gc
 from tqdm import tqdm
+from matplotlib import pyplot as plt
 
 def setup_ddp(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -36,16 +37,17 @@ def train(rank, world_size, hparams, config, train_subset, val_subset):
         with open(hparams.model_config, "r") as f:
             model_config = yaml.load(f, Loader=yaml.FullLoader)
             model_config['model_params']['hidden_channels'] = config['hidden_channels']
+            model_config['model_params']['out_channels'] = config['hidden_channels']
             model_config['model_params']['num_layers'] = config['num_layers']
             model_config['recalc_mae'] = None
         gnn = GNN(**model_config, num_ffn_layers=config['num_ffn_layers']).to(rank)
         gnn = DDP(gnn, device_ids=[rank])
         optimizer = torch.optim.Adam(gnn.parameters(), lr=model_config['lr'])
-        # print(gnn)
-        
+        print(gnn)
+                
         # Set up data
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_subset, num_replicas=world_size, rank=rank, shuffle=True)
-        train_loader = DataLoader(val_subset, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
+        train_loader = DataLoader(train_subset, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
         val_loader = DataLoader(val_subset, batch_size=hparams.bs, num_workers=0)
 
         # training loop
@@ -56,20 +58,27 @@ def train(rank, world_size, hparams, config, train_subset, val_subset):
             gnn.train()
             for batch in tqdm(train_loader):
                 optimizer.zero_grad()
-                x, edge_index, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.batch.to(rank)
+
+                x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
                 targets = batch.y.to(rank)
+
                 outputs = gnn(x, edge_index, edge_attr, batch_ptr)
                 loss = sid(model_spectra=outputs, target_spectra=targets)
                 loss.backward()
                 optimizer.step()
 
+                # for i in range(10):
+                #     x_axis = torch.arange(400, 4000, step=4)
+                #     epoch_dir = os.path.join("pics/train", f"epoch_{epoch}")
+                #     os.makedirs(epoch_dir, exist_ok=True)
+                #     plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+                #     plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+                #     plt.legend()
+                #     plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
+                #     plt.close()
+
                 if rank == 0:
                     wandb.log({"train_loss": loss})
-
-                # clean up memory
-                del x, edge_index, edge_attr, batch_ptr, targets, outputs, loss
-                torch.cuda.empty_cache()
-                gc.collect()
             
             # Synchronize processes
             dist.barrier()
@@ -79,19 +88,24 @@ def train(rank, world_size, hparams, config, train_subset, val_subset):
                 print("Evaluating...")
                 val_loss = 0.0
 
-                gnn.eval()
+                # gnn.eval()
                 with torch.no_grad():
                     for batch in val_loader:
                         x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
                         targets = batch.y.to(rank)
                         outputs = gnn(x, edge_index, edge_attr, batch_ptr)
                         loss = sid(model_spectra=outputs, target_spectra=targets)
-                        val_loss += loss.item()
+                        val_loss += loss.item()      
 
-                        # clean up memory
-                        del x, edge_index, edge_attr, batch_ptr, targets, outputs, loss
-                        torch.cuda.empty_cache()
-                        gc.collect()
+                        # for i in range(outputs.shape[0]):
+                        #     x_axis = torch.arange(400, 4000, step=4)
+                        #     epoch_dir = os.path.join("pics/val", f"epoch_{epoch}")
+                        #     os.makedirs(epoch_dir, exist_ok=True)
+                        #     plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+                        #     plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+                        #     plt.legend()
+                        #     plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
+                        #     plt.close()
                 
                 avg_val_loss = val_loss / len(val_loader)
                 if best_val_loss is None or avg_val_loss < best_val_loss:
@@ -116,7 +130,6 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--graphs_path", type=str, help="Path to the PyG graphs")
-
     parser.add_argument("--split_dir", type=str, help="Path to the folder of the split dataset")
     parser.add_argument("--model_config", type=str, help="Path to the config of the model")
     parser.add_argument("--max_epochs", type=int, help="Maximum number of training epochs")
@@ -127,7 +140,7 @@ def main():
     with open("configs/sweep_config.json", 'r') as file:
         sweep_config = json.load(file)
     
-    sweep_id = wandb.sweep(sweep_config, project="simg_ir")
+    sweep_id = wandb.sweep(sweep_config, project="simg-ir")
     
     # Start the sweep
     world_size = torch.cuda.device_count()
@@ -143,11 +156,6 @@ def main():
     
     val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
     val_subset = Subset(graphs, val_indices)
-
-    del graphs  
-    del train_indices
-    del val_indices
-    gc.collect()
 
     def train_wrapper():
         # Initialize WandB and get config
