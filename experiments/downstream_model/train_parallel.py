@@ -171,4 +171,5 @@ def main():
     wandb.agent(sweep_id, function=train_wrapper, count=1000)
 
 if __name__ == "__main__":
+    print("PID: ", os.getpid())
     main()

@@ -8,12 +8,12 @@
         "hidden_channels": {
             "distribution": "int_uniform",
             "min": 32,
-            "max": 1024
+            "max": 2048
         },
         "num_layers": {
             "distribution": "int_uniform",
             "min": 3,
-            "max": 8
+            "max": 16
         },
         "num_ffn_layers": {
             "distribution": "int_uniform",

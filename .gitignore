@@ -167,7 +167,7 @@ pics
 *.pt
 data/savoie_dataset.hdf5
 data/dataset/
-*.ipynb
+Untitled-*.ipynb
 nohup.out
 *.smi
 *.xyz
