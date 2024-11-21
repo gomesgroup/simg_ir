@@ -141,6 +141,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--graphs_path", type=str, help="Path to the PyG graphs")
     parser.add_argument("--split_dir", type=str, help="Path to the folder of the split dataset")
+    parser.add_argument("--sweep_config", type=str, help="Path to the config file for the sweep")
     parser.add_argument("--model_config", type=str, help="Path to the config of the model")
     parser.add_argument("--max_epochs", type=int, help="Maximum number of training epochs")
     parser.add_argument("--bs", type=int, help="Batch size")
