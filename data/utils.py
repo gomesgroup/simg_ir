@@ -60,13 +60,18 @@ def prepare_simulated(filename):
         data_obj['data']['wavenumber'] = new_wavenumbers.tolist()
         data_obj['data']['intensity'] = new_intensities.tolist()
 
+    # scale down intensities by 10^28
+    for data_obj in data:
+        for i in range(len(data_obj['data']['intensity'])):
+            data_obj['data']['intensity'][i] /= 1e28
+
     # Create dictionary mapping SMILES to intensities
     data = {}
     for data_obj in simulated_data:
         smiles = data_obj['smiles']
         intensity = data_obj['data']['intensity']
         data[smiles] = intensity
-
+    
     return data
 
 def convert2xyz(smi):
