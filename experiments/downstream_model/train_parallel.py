@@ -15,16 +15,18 @@ import gc
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 
-def setup_ddp(rank, world_size):
+# mp.set_sharing_strategy('file_system')
+
+def setup_ddp(rank, world_size, gpu_ids):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
+    torch.cuda.set_device(gpu_ids[rank])
 
-def train(rank, world_size, hparams, config, train_subset, val_subset):
+def train(rank, world_size, hparams, config, gpu_ids):
     try:
         # Setup DDP environment
-        setup_ddp(rank, world_size)
+        setup_ddp(rank, world_size, gpu_ids)
         
         # Initialize WandB only on the main process
         if rank == 0:
@@ -40,12 +42,20 @@ def train(rank, world_size, hparams, config, train_subset, val_subset):
             model_config['model_params']['out_channels'] = config['hidden_channels']
             model_config['model_params']['num_layers'] = config['num_layers']
             model_config['recalc_mae'] = None
-        gnn = GNN(**model_config, num_ffn_layers=config['num_ffn_layers']).to(rank)
-        gnn = DDP(gnn, device_ids=[rank])
+        gnn = GNN(**model_config, num_ffn_layers=config['num_ffn_layers']).to(gpu_ids[rank])
+        gnn = DDP(gnn, device_ids=[gpu_ids[rank]])
         optimizer = torch.optim.Adam(gnn.parameters(), lr=model_config['lr'])
         print(gnn)
                 
         # Set up data
+        graphs = torch.load(os.path.join(hparams.graphs_path))
+
+        train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"))
+        train_subset = Subset(graphs, train_indices)
+        
+        val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
+        val_subset = Subset(graphs, val_indices)
+
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_subset, num_replicas=world_size, rank=rank, shuffle=True)
         train_loader = DataLoader(train_subset, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
         val_loader = DataLoader(val_subset, batch_size=hparams.bs, num_workers=0)
@@ -59,8 +69,8 @@ def train(rank, world_size, hparams, config, train_subset, val_subset):
             for batch in tqdm(train_loader):
                 optimizer.zero_grad()
 
-                x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
-                targets = batch.y.to(rank)
+                x, edge_index, edge_attr, batch_ptr = batch.x.to(gpu_ids[rank]), batch.edge_index.to(gpu_ids[rank]), batch.edge_attr.to(gpu_ids[rank]), batch.batch.to(gpu_ids[rank])
+                targets = batch.y.to(gpu_ids[rank])
 
                 outputs = gnn(x, edge_index, edge_attr, batch_ptr)
                 loss = sid(model_spectra=outputs, target_spectra=targets)
@@ -91,8 +101,8 @@ def train(rank, world_size, hparams, config, train_subset, val_subset):
                 # gnn.eval()
                 with torch.no_grad():
                     for batch in val_loader:
-                        x, edge_index, edge_attr, batch_ptr = batch.x.to(rank), batch.edge_index.to(rank), batch.edge_attr.to(rank), batch.batch.to(rank)
-                        targets = batch.y.to(rank)
+                        x, edge_index, edge_attr, batch_ptr = batch.x.to(gpu_ids[rank]), batch.edge_index.to(gpu_ids[rank]), batch.edge_attr.to(gpu_ids[rank]), batch.batch.to(gpu_ids[rank])
+                        targets = batch.y.to(gpu_ids[rank])
                         outputs = gnn(x, edge_index, edge_attr, batch_ptr)
                         loss = sid(model_spectra=outputs, target_spectra=targets)
                         val_loss += loss.item()      
@@ -134,6 +144,7 @@ def main():
     parser.add_argument("--model_config", type=str, help="Path to the config of the model")
     parser.add_argument("--max_epochs", type=int, help="Maximum number of training epochs")
     parser.add_argument("--bs", type=int, help="Batch size")
+    parser.add_argument("--gpu_ids", type=str, default="0,1,2,3", help="Comma-separated list of GPU IDs to use")
     hparams = parser.parse_args()
     
     # Read the sweep configuration
@@ -142,20 +153,9 @@ def main():
     
     sweep_id = wandb.sweep(sweep_config, project="simg-ir")
     
-    # Start the sweep
-    world_size = torch.cuda.device_count()
-
-    graphs = torch.load(os.path.join(hparams.graphs_path))
-    for data in tqdm(graphs):
-        data.x.share_memory_()
-        data.edge_index.share_memory_()
-        data.y.share_memory_()
-
-    train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"))
-    train_subset = Subset(graphs, train_indices)
-    
-    val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
-    val_subset = Subset(graphs, val_indices)
+    # Parse GPU IDs
+    gpu_ids = [int(id) for id in hparams.gpu_ids.split(",")]
+    world_size = len(gpu_ids)
 
     def train_wrapper():
         # Initialize WandB and get config
@@ -166,7 +166,7 @@ def main():
             'num_ffn_layers': wandb.config.num_ffn_layers,
         }
 
-        mp.spawn(train, args=(world_size, hparams, config, train_subset, val_subset), nprocs=world_size, join=True)
+        mp.spawn(train, args=(world_size, hparams, config, gpu_ids), nprocs=world_size, join=True)
     
     wandb.agent(sweep_id, function=train_wrapper, count=1000)
 

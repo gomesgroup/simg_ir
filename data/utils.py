@@ -11,6 +11,9 @@ from simg.model_utils import pipeline
 from simg.data import get_connectivity_info
 from simg.graph_construction import convert_NBO_graph_to_downstream
 from functools import partial
+import json
+from scipy import interpolate
+
 
 def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
     data = {}
@@ -29,6 +32,41 @@ def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
         for smi in smiles_samples:
             data[smi] = group[smi][()]
         
+    return data
+
+def prepare_simulated(filename):
+    with open(filename, 'r') as f:
+        simulated_data = json.load(f)
+
+    # remove negative intensities
+    for data_obj in simulated_data:
+        idx = 0
+        while idx < len(data_obj['data']['intensity']):
+            data_obj['data']['intensity'][idx] = max(0, data_obj['data']['intensity'][idx])
+            idx += 1
+
+    # interpolate to 4 cm-1 resolution
+    new_wavenumbers = np.arange(400, 4000, 4)
+
+    for data_obj in simulated_data:
+        orig_wavenumbers = np.array(data_obj['data']['wavenumber'])
+        orig_intensities = np.array(data_obj['data']['intensity'])
+        
+        f = interpolate.interp1d(orig_wavenumbers, orig_intensities, 
+                                bounds_error=False, fill_value=0)
+        
+        new_intensities = f(new_wavenumbers)
+        
+        data_obj['data']['wavenumber'] = new_wavenumbers.tolist()
+        data_obj['data']['intensity'] = new_intensities.tolist()
+
+    # Create dictionary mapping SMILES to intensities
+    data = {}
+    for data_obj in simulated_data:
+        smiles = data_obj['smiles']
+        intensity = data_obj['data']['intensity']
+        data[smiles] = intensity
+
     return data
 
 def convert2xyz(smi):
@@ -84,7 +122,7 @@ def graph_to_NBO(graphs, molecular_only):
 
 def preprocess(args):
     print("Preparing dataset...")
-    data = prepare_savoie(args.size)
+    data = prepare_simulated(args.filename)
     smiles = list(data.keys())
     
     print("Converting SMILES to XYZ...")

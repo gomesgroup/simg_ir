@@ -166,8 +166,11 @@ lightning_logs
 pics
 *.pt
 data/savoie_dataset.hdf5
-data/dataset/
+data/datasets/
+data/simulated/
 Untitled-*.ipynb
 nohup.out
 *.smi
 *.xyz
+*.csv
+*.tar

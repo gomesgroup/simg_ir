@@ -7,18 +7,18 @@
     "parameters": {
         "hidden_channels": {
             "distribution": "int_uniform",
-            "min": 32,
-            "max": 2048
+            "min": 882,
+            "max": 1313
         },
         "num_layers": {
             "distribution": "int_uniform",
-            "min": 3,
+            "min": 9,
             "max": 16
         },
         "num_ffn_layers": {
             "distribution": "int_uniform",
             "min": 1,
-            "max": 8
+            "max": 3
         }
     }
 }
