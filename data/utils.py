@@ -1,5 +1,4 @@
 import os
-import h5py
 import uuid
 import torch
 import random
@@ -15,24 +14,24 @@ import json
 from scipy import interpolate
 
 
-def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
-    data = {}
-    with h5py.File(filename, "r") as f:
-        # available methods within the dataset: 'ir', 'ms', 'nmr'
-        group = f[method]
-        smiles = list(group.keys())
+# def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
+#     data = {}
+#     with h5py.File(filename, "r") as f:
+#         # available methods within the dataset: 'ir', 'ms', 'nmr'
+#         group = f[method]
+#         smiles = list(group.keys())
 
-        # get random subset of smiles, else get everything
-        if size != -1:
-            smiles_samples = random.sample(smiles, size)
-        else:
-            smiles_samples = smiles
+#         # get random subset of smiles, else get everything
+#         if size != -1:
+#             smiles_samples = random.sample(smiles, size)
+#         else:
+#             smiles_samples = smiles
         
-        # combine spectrum data
-        for smi in smiles_samples:
-            data[smi] = group[smi][()]
+#         # combine spectrum data
+#         for smi in smiles_samples:
+#             data[smi] = group[smi][()]
         
-    return data
+#     return data
 
 def prepare_simulated(filename):
     with open(filename, 'r') as f:

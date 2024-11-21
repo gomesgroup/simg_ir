@@ -14,14 +14,31 @@ import wandb
 import gc
 from tqdm import tqdm
 from matplotlib import pyplot as plt
+import datetime
 
 # mp.set_sharing_strategy('file_system')
 
 def setup_ddp(rank, world_size, gpu_ids):
+    # Ensure CUDA is available
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available")
+    
+    # Initialize CUDA before setting up DDP
+    torch.cuda.init()
+    
+    # Set device before initializing process group
+    torch.cuda.set_device(gpu_ids[rank])
+    
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(gpu_ids[rank])
+    
+    # Initialize process group with timeout
+    dist.init_process_group(
+        "nccl",
+        rank=rank,
+        world_size=world_size,
+        timeout=datetime.timedelta(minutes=30)
+    )
 
 def train(rank, world_size, hparams, config, gpu_ids):
     try:
@@ -77,15 +94,15 @@ def train(rank, world_size, hparams, config, gpu_ids):
                 loss.backward()
                 optimizer.step()
 
-                # for i in range(10):
-                #     x_axis = torch.arange(400, 4000, step=4)
-                #     epoch_dir = os.path.join("pics/train", f"epoch_{epoch}")
-                #     os.makedirs(epoch_dir, exist_ok=True)
-                #     plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-                #     plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-                #     plt.legend()
-                #     plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
-                #     plt.close()
+                for i in range(2):
+                    x_axis = torch.arange(400, 4000, step=4)
+                    epoch_dir = os.path.join("pics/train", f"epoch_{epoch}")
+                    os.makedirs(epoch_dir, exist_ok=True)
+                    plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+                    plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+                    plt.legend()
+                    plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
+                    plt.close()
 
                 if rank == 0:
                     wandb.log({"train_loss": loss})
@@ -107,15 +124,15 @@ def train(rank, world_size, hparams, config, gpu_ids):
                         loss = sid(model_spectra=outputs, target_spectra=targets)
                         val_loss += loss.item()      
 
-                        # for i in range(outputs.shape[0]):
-                        #     x_axis = torch.arange(400, 4000, step=4)
-                        #     epoch_dir = os.path.join("pics/val", f"epoch_{epoch}")
-                        #     os.makedirs(epoch_dir, exist_ok=True)
-                        #     plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-                        #     plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-                        #     plt.legend()
-                        #     plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
-                        #     plt.close()
+                        for i in range(2):
+                            x_axis = torch.arange(400, 4000, step=4)
+                            epoch_dir = os.path.join("pics/val", f"epoch_{epoch}")
+                            os.makedirs(epoch_dir, exist_ok=True)
+                            plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+                            plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+                            plt.legend()
+                            plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
+                            plt.close()
                 
                 avg_val_loss = val_loss / len(val_loader)
                 if best_val_loss is None or avg_val_loss < best_val_loss:
@@ -154,8 +171,11 @@ def main():
     
     sweep_id = wandb.sweep(sweep_config, project="simg-ir")
     
-    # Parse GPU IDs
+    # Validate GPU IDs against available devices
+    available_gpus = torch.cuda.device_count()
     gpu_ids = [int(id) for id in hparams.gpu_ids.split(",")]
+    if any(gpu_id >= available_gpus for gpu_id in gpu_ids):
+        raise ValueError(f"Specified GPU IDs {gpu_ids} exceed available devices ({available_gpus})")
     world_size = len(gpu_ids)
 
     def train_wrapper():
