@@ -174,3 +174,7 @@ nohup.out
 *.xyz
 *.csv
 *.tar
+
+validation_spectra_plots/
+results
+*.nohup

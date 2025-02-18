@@ -32,7 +32,7 @@ graphs = torch.load(os.path.join(hparams.graphs_path))
 
 train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"))
 train_subset = Subset(graphs, train_indices)
-train_loader = DataLoader(train_subset, batch_size=hparams.bs, shuffle=True, drop_last=False, num_workers=12)
+train_loader = DataLoader(train_subset, batch_size=hparams.bs, shuffle=True, drop_last=True, num_workers=12)
 
 val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
 val_subset = Subset(graphs, val_indices)
@@ -60,6 +60,6 @@ model_config['recalc_mae'] = None
 
 gnn = GNN(**model_config)
 gnn.train()
-trainer = pl.Trainer(accelerator='gpu', devices=4, enable_checkpointing=False, strategy='ddp_find_unused_parameters_true')
+trainer = pl.Trainer(accelerator='gpu', devices=1, enable_checkpointing=False, strategy='ddp_find_unused_parameters_true')
 trainer.fit(gnn, train_loader, val_loader)
 trainer.test(gnn, test_loader)

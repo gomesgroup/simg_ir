@@ -7,6 +7,42 @@ import os
 from matplotlib import pyplot as plt
 import wandb
 import torch.distributed as dist
+import json
+import numpy as np
+from scipy import interpolate
+from scipy.ndimage import gaussian_filter1d
+
+def prepare_simulated(filename):
+    with open(filename, 'r') as f:
+        simulated_data = json.load(f)
+
+    # Preprocess all spectra with interpolation and Gaussian smoothing
+    new_wavenumbers = np.arange(400, 4000, 4)  # Common wavenumber grid
+    processed_spectra = {}
+
+    for data_obj in simulated_data:
+        # Get original data
+        orig_wavenumbers = np.array(data_obj['data']['wavenumber'])
+        orig_intensities = np.array(data_obj['data']['intensity'])
+        
+        # Interpolate to new grid
+        f = interpolate.interp1d(orig_wavenumbers, orig_intensities,
+                                bounds_error=False, fill_value=0)
+        new_intensities = f(new_wavenumbers)
+        
+        # Apply Gaussian smoothing with sigma=1
+        smoothed = gaussian_filter1d(new_intensities, sigma=1)
+
+        # remove negative values
+        smoothed = np.where(smoothed < 0, 0, smoothed)
+
+        # normalize by sum of intensities
+        smoothed = smoothed / np.sum(smoothed)
+        
+        # Store processed spectrum
+        processed_spectra[data_obj['smiles']] = smoothed
+    
+    return processed_spectra
 
 class GNNResModel(nn.Module):
     def __init__(self, input_features, edge_features, out_targets, hidden_size, fcn_hidden_dim, embedding_dim,
@@ -128,8 +164,6 @@ class GNN(pl.LightningModule):
         else:
             out = self.model(x, edge_index, edge_attr, batch)
 
-        out = sigmoid(out)
-
         return out
 
     def log_scalar_dict(self, metrics, prefix):
@@ -152,12 +186,12 @@ class GNN(pl.LightningModule):
         y = self.forward(x, edge_index, edge_attr, batch.batch)
 
         loss = self.loss(
-            y, batch.y
+            y, batch
         )
 
         # wandb.log({'train_loss': loss})
 
-        # for i in range(y.shape[0]):
+        # for i in range(1):
         #     x_axis = torch.arange(400, 4000, step=4)
         #     epoch_dir = os.path.join("pics/train", f"epoch_{self.current_epoch}")
         #     os.makedirs(epoch_dir, exist_ok=True)
@@ -177,18 +211,18 @@ class GNN(pl.LightningModule):
         y = self.forward(x, edge_index, edge_attr, batch.batch)
 
         loss = self.loss(
-            y, batch.y
+            y, batch
         )
 
-        # for i in range(y.shape[0]):
-        #     x_axis = torch.arange(400, 4000, step=4)
-        #     epoch_dir = os.path.join("pics/val", f"epoch_{self.current_epoch}")
-        #     os.makedirs(epoch_dir, exist_ok=True)
-        #     plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-        #     plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-        #     plt.legend()
-        #     plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
-        #     plt.close()
+        for i in range(1):
+            x_axis = torch.arange(400, 4000, step=4)
+            epoch_dir = os.path.join("pics/val", f"epoch_{self.current_epoch}")
+            os.makedirs(epoch_dir, exist_ok=True)
+            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+            plt.legend()
+            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
+            plt.close()
 
         # wandb.log({'val_loss': loss})
 
@@ -206,7 +240,7 @@ class GNN(pl.LightningModule):
         y = self.forward(x, edge_index, edge_attr, batch.batch)
 
         loss = self.loss(
-            y, batch.y
+            y, batch
         )
 
         for i in range(y.shape[0]):
@@ -227,20 +261,24 @@ class GNN(pl.LightningModule):
     def configure_optimizers(self):
         return Adam(self.parameters(), lr=self.hparams.lr)
 
-def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
-    target_spectra = target_spectra.reshape(model_spectra.shape)
+gas_spectra = prepare_simulated("/home/jose/simg_ir/data/simulated/gas_649.json")
 
-    # set limits
-    model_spectra[model_spectra < threshold] = threshold
-    target_spectra[target_spectra < threshold] = threshold
+def sid(model_spectra: torch.tensor, batch: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
+    target_spectra = batch.y.reshape(model_spectra.shape)
+    
+    # Create a new tensor for normalized spectra
+    normalized_spectra = model_spectra.clone()
+    
+    # Normalize spectra by corresponding gas spectra sum
+    for i, smiles in enumerate(batch.smiles):
+        if smiles in gas_spectra:
+            gas_spectrum = torch.tensor(gas_spectra[smiles], device=model_spectra.device)
+            gas_sum = torch.sum(gas_spectrum)
+            normalized_spectra[i] = model_spectra[i] / gas_sum
 
-    # option 1: SID loss
-    loss = torch.mul(torch.log(torch.div(model_spectra,target_spectra)),model_spectra) + torch.mul(torch.log(torch.div(target_spectra,model_spectra)),target_spectra)
-
-    # option 2: MSE loss
-    # loss = torch.square(target_spectra - model_spectra)
-        
-    loss = torch.sum(loss,axis=1)
+    # Calculate MSE loss
+    loss = torch.square(target_spectra - normalized_spectra)
+    loss = torch.sum(loss, axis=1)
     loss = loss.mean()
 
     return loss

@@ -166,7 +166,7 @@ def main():
     hparams = parser.parse_args()
     
     # Read the sweep configuration
-    with open("configs/sweep_config.json", 'r') as file:
+    with open(hparams.sweep_config, 'r') as file:
         sweep_config = json.load(file)
     
     sweep_id = wandb.sweep(sweep_config, project="simg-ir")
