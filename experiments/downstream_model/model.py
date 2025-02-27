@@ -189,18 +189,6 @@ class GNN(pl.LightningModule):
             y, batch
         )
 
-        # wandb.log({'train_loss': loss})
-
-        # for i in range(1):
-        #     x_axis = torch.arange(400, 4000, step=4)
-        #     epoch_dir = os.path.join("pics/train", f"epoch_{self.current_epoch}")
-        #     os.makedirs(epoch_dir, exist_ok=True)
-        #     plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-        #     plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-        #     plt.legend()
-        #     plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
-        #     plt.close()
-
         print("Train loss: ", loss.item())
 
         return loss
@@ -213,16 +201,6 @@ class GNN(pl.LightningModule):
         loss = self.loss(
             y, batch
         )
-
-        for i in range(1):
-            x_axis = torch.arange(400, 4000, step=4)
-            epoch_dir = os.path.join("pics/val", f"epoch_{self.current_epoch}")
-            os.makedirs(epoch_dir, exist_ok=True)
-            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-            plt.legend()
-            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
-            plt.close()
 
         # wandb.log({'val_loss': loss})
 
@@ -243,17 +221,6 @@ class GNN(pl.LightningModule):
             y, batch
         )
 
-        for i in range(y.shape[0]):
-            x_axis = torch.arange(400, 4000, step=4)
-            epoch_dir = os.path.join("pics/test", wandb.run.name)
-            os.makedirs(epoch_dir, exist_ok=True)
-            plt.plot(x_axis, y[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-            plt.plot(x_axis, batch.y.reshape(y.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-            plt.title(batch.smiles[i])
-            plt.legend()
-            plt.savefig(os.path.join(epoch_dir, f"{batch_idx}_{i}.png"))
-            plt.close()
-
         # wandb.log({'test_loss': loss})
 
         return loss
@@ -263,21 +230,11 @@ class GNN(pl.LightningModule):
 
 gas_spectra = prepare_simulated("/home/jose/simg_ir/data/simulated/gas_649.json")
 
-def sid(model_spectra: torch.tensor, batch: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
-    target_spectra = batch.y.reshape(model_spectra.shape)
-    
-    # Create a new tensor for normalized spectra
-    normalized_spectra = model_spectra.clone()
-    
-    # Normalize spectra by corresponding gas spectra sum
-    for i, smiles in enumerate(batch.smiles):
-        if smiles in gas_spectra:
-            gas_spectrum = torch.tensor(gas_spectra[smiles], device=model_spectra.device)
-            gas_sum = torch.sum(gas_spectrum)
-            normalized_spectra[i] = model_spectra[i] / gas_sum
+def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
+    target_spectra = target_spectra.reshape(model_spectra.shape)
 
     # Calculate MSE loss
-    loss = torch.square(target_spectra - normalized_spectra)
+    loss = torch.square(target_spectra - model_spectra)
     loss = torch.sum(loss, axis=1)
     loss = loss.mean()
 

@@ -4,6 +4,6 @@ target_dim: 900
 num_ffn_layers: 2
 model_params:
   out_channels: 913
-  in_channels: 42
+  in_channels: 17
   hidden_channels: 913
   num_layers: 11

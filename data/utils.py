@@ -41,6 +41,8 @@ def prepare_simulated(filename):
     # Preprocess all spectra with interpolation and Gaussian smoothing
     new_wavenumbers = np.arange(400, 4000, 4)  # Common wavenumber grid
     processed_spectra = {}
+    max_intensities = [np.max(data_obj['data']['intensity']) for data_obj in simulated_data]
+    median_max_intensity = np.median(max_intensities)
 
     for data_obj in simulated_data:
         # Get original data
@@ -56,13 +58,13 @@ def prepare_simulated(filename):
         smoothed = gaussian_filter1d(new_intensities, sigma=1)
 
         # remove negative values
-        smoothed = np.where(smoothed < 0, 0, smoothed)
-
-        # normalize by sum of intensities
-        smoothed = smoothed / np.sum(smoothed)
+        smoothed = np.where(smoothed < 0, 0, smoothed)  
         
         # Store processed spectrum
         processed_spectra[data_obj['smiles']] = smoothed
+
+        # Scale down by median of max intensity
+        processed_spectra[data_obj['smiles']] = processed_spectra[data_obj['smiles']] / median_max_intensity
     
     return processed_spectra
 
@@ -82,6 +84,23 @@ def prepare_difference(gas_filename, liquid_filename):
         spectral_differences[smiles] = difference
 
     return spectral_differences
+
+def prepare_correlation(gas_filename, liquid_filename):
+    gas_processed_spectra = prepare_simulated(gas_filename)
+    liquid_processed_spectra = prepare_simulated(liquid_filename)
+        
+    # Create a dictionary to store the differences between liquid and gas spectra
+    spectral_correlations = {}
+
+    # Calculate differences for all molecules
+    common_smiles = set(gas_processed_spectra.keys()) & set(liquid_processed_spectra.keys())
+    for smiles in common_smiles:
+        gas_spectrum = gas_processed_spectra[smiles]
+        liquid_spectrum = liquid_processed_spectra[smiles]
+        correlation = np.corrcoef(gas_spectrum, liquid_spectrum)[0, 1]
+        spectral_correlations[smiles] = correlation
+
+    return spectral_correlations
 
 def convert2xyz(smi):
     path = uuid.uuid4().hex
@@ -141,6 +160,9 @@ def preprocess(args):
     elif args.dataset == "difference":
         print("Preparing difference dataset...")
         data = prepare_difference(args.gas_filename, args.liquid_filename)
+    elif args.dataset == "correlation":
+        print("Preparing correlation dataset...")
+        data = prepare_correlation(args.gas_filename, args.liquid_filename)
     elif args.dataset == "savoie":
         print("Preparing Savoie dataset...")
         data = prepare_savoie(args.size, args.method, args.filename)
@@ -164,7 +186,7 @@ def preprocess(args):
     for graph in tqdm(graphs):
         clean_graphs.append(
             Data(
-                x=torch.FloatTensor(graph.x),
+                x=torch.FloatTensor(graph.x[:, :17]),
                 edge_index=torch.LongTensor(graph.edge_index),
                 edge_attr=torch.FloatTensor(graph.edge_attr),
                 smiles=graph.smiles,

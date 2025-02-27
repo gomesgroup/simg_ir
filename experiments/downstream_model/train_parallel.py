@@ -4,152 +4,112 @@ import json
 import torch
 import argparse
 import logging
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Subset
-from torch_geometric.loader import DataLoader  # Use PyTorch Geometric DataLoader
+from torch_geometric.loader import DataLoader
 from model import GNN, sid
 import wandb
-import gc
 from tqdm import tqdm
-from matplotlib import pyplot as plt
-import datetime
+import matplotlib.pyplot as plt
 
-# mp.set_sharing_strategy('file_system')
-
-def setup_ddp(rank, world_size, gpu_ids):
-    # Ensure CUDA is available
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is not available")
+def train(hparams, config):
+    # Initialize WandB
+    logging.info("WandB initialized")
+    best_epoch = None
+    best_val_loss = None
     
-    # Initialize CUDA before setting up DDP
-    torch.cuda.init()
-    
-    # Set device before initializing process group
-    torch.cuda.set_device(gpu_ids[rank])
-    
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    
-    # Initialize process group with timeout
-    dist.init_process_group(
-        "nccl",
-        rank=rank,
-        world_size=world_size,
-        timeout=datetime.timedelta(minutes=30)
-    )
-
-def train(rank, world_size, hparams, config, gpu_ids):
-    try:
-        # Setup DDP environment
-        setup_ddp(rank, world_size, gpu_ids)
-        
-        # Initialize WandB only on the main process
-        if rank == 0:
-            wandb.init(project='simg-ir', config=config)
-            logging.info("WandB initialized")
-            best_epoch = None
-            best_val_loss = None
+    # Set device
+    device = torch.device(f'cuda:{hparams.gpu_ids}')
             
-        # Set up model
-        with open(hparams.model_config, "r") as f:
-            model_config = yaml.load(f, Loader=yaml.FullLoader)
-            model_config['model_params']['hidden_channels'] = config['hidden_channels']
-            model_config['model_params']['out_channels'] = config['hidden_channels']
-            model_config['model_params']['num_layers'] = config['num_layers']
-            model_config['recalc_mae'] = None
-        gnn = GNN(**model_config, num_ffn_layers=config['num_ffn_layers']).to(gpu_ids[rank])
-        gnn = DDP(gnn, device_ids=[gpu_ids[rank]])
-        optimizer = torch.optim.Adam(gnn.parameters(), lr=model_config['lr'])
-        print(gnn)
+    # Set up model
+    with open(hparams.model_config, "r") as f:
+        model_config = yaml.load(f, Loader=yaml.FullLoader)
+        
+        # Update model_params separately
+        model_params = model_config['model_params']
+        model_params['hidden_channels'] = config['hidden_channels']
+        model_params['out_channels'] = config['hidden_channels']
+        model_params['num_layers'] = config['num_layers']
+        
+        # Keep num_ffn_layers separate from model_params
+        model_config['num_ffn_layers'] = config['num_ffn_layers']
+        model_config['model_params'] = model_params
+        model_config['recalc_mae'] = None
+    
+    gnn = GNN(**model_config).to(device)
+    optimizer = torch.optim.Adam(gnn.parameters(), lr=model_config['lr'])
+    print(gnn)
+            
+    # Set up data
+    graphs = torch.load(os.path.join(hparams.graphs_path), weights_only=False)
+
+    train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"), weights_only=False)
+    train_subset = Subset(graphs, train_indices)
+    
+    val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"), weights_only=False)
+    val_subset = Subset(graphs, val_indices)
+
+    train_loader = DataLoader(train_subset, batch_size=hparams.bs, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_subset, batch_size=hparams.bs, num_workers=0)
+
+    # training loop
+    for epoch in range(hparams.max_epochs):
+        print("Epoch", epoch)
+        
+        # Training
+        gnn.train()
+        for batch in tqdm(train_loader):
+            optimizer.zero_grad()
+
+            x = batch.x.to(device)
+            edge_index = batch.edge_index.to(device)
+            edge_attr = batch.edge_attr.to(device)
+            batch_ptr = batch.batch.to(device)
+            targets = batch.y.to(device)
+
+            outputs = gnn(x, edge_index, edge_attr, batch_ptr)
+            loss = sid(model_spectra=outputs, target_spectra=targets)
+            loss.backward()
+            optimizer.step()
+
+            print("Loss: ", loss.item())
+            wandb.log({"train_loss": loss.item()})
+        
+        # Validation
+        print("Evaluating...")
+        val_loss = 0.0
+        gnn.eval()
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(val_loader):
+                x = batch.x.to(device)
+                edge_index = batch.edge_index.to(device)
+                edge_attr = batch.edge_attr.to(device)
+                batch_ptr = batch.batch.to(device)
+                targets = batch.y.to(device)
                 
-        # Set up data
-        graphs = torch.load(os.path.join(hparams.graphs_path))
-
-        train_indices = torch.load(os.path.join(hparams.split_dir, "train_indices.pt"))
-        train_subset = Subset(graphs, train_indices)
-        
-        val_indices = torch.load(os.path.join(hparams.split_dir, "val_indices.pt"))
-        val_subset = Subset(graphs, val_indices)
-
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_subset, num_replicas=world_size, rank=rank, shuffle=True)
-        train_loader = DataLoader(train_subset, batch_size=hparams.bs, shuffle=False, sampler=train_sampler, drop_last=False, num_workers=0)
-        val_loader = DataLoader(val_subset, batch_size=hparams.bs, num_workers=0)
-
-        # training loop
-        for epoch in range(hparams.max_epochs):
-            print("Epoch", epoch)
-            train_sampler.set_epoch(epoch)
-            
-            gnn.train()
-            for batch in tqdm(train_loader):
-                optimizer.zero_grad()
-
-                x, edge_index, edge_attr, batch_ptr = batch.x.to(gpu_ids[rank]), batch.edge_index.to(gpu_ids[rank]), batch.edge_attr.to(gpu_ids[rank]), batch.batch.to(gpu_ids[rank])
-                targets = batch.y.to(gpu_ids[rank])
-
                 outputs = gnn(x, edge_index, edge_attr, batch_ptr)
                 loss = sid(model_spectra=outputs, target_spectra=targets)
-                loss.backward()
-                optimizer.step()
+                val_loss += loss.item()      
 
-                for i in range(2):
-                    x_axis = torch.arange(400, 4000, step=4)
-                    epoch_dir = os.path.join("pics/train", f"epoch_{epoch}")
-                    os.makedirs(epoch_dir, exist_ok=True)
-                    plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-                    plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-                    plt.legend()
-                    plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
-                    plt.close()
-
-                if rank == 0:
-                    wandb.log({"train_loss": loss})
+                # Plot validation spectra
+                x_axis = torch.arange(400, 4000, step=4)
+                epoch_dir = os.path.join("pics", wandb.run.name, f"epoch_{epoch}")
+                os.makedirs(epoch_dir, exist_ok=True)
+                plt.plot(x_axis, outputs[0].detach().cpu().numpy(), color="#E8945A", label="Prediction")
+                plt.plot(x_axis, batch.y.reshape(outputs.shape)[0].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
+                plt.legend()
+                plt.savefig(os.path.join(epoch_dir, f"{batch_idx}.png"))
+                plt.close()
             
-            # Synchronize processes
-            dist.barrier()
+            avg_val_loss = val_loss / len(val_loader)
+            if best_val_loss is None or avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                best_epoch = epoch
 
-            # Validation step w/o parallelization
-            if rank == 0:
-                print("Evaluating...")
-                val_loss = 0.0
+            wandb.log({"epoch": epoch, "val_loss": avg_val_loss, "best_epoch": best_epoch})
 
-                # gnn.eval()
-                with torch.no_grad():
-                    for batch in val_loader:
-                        x, edge_index, edge_attr, batch_ptr = batch.x.to(gpu_ids[rank]), batch.edge_index.to(gpu_ids[rank]), batch.edge_attr.to(gpu_ids[rank]), batch.batch.to(gpu_ids[rank])
-                        targets = batch.y.to(gpu_ids[rank])
-                        outputs = gnn(x, edge_index, edge_attr, batch_ptr)
-                        loss = sid(model_spectra=outputs, target_spectra=targets)
-                        val_loss += loss.item()      
-
-                        for i in range(2):
-                            x_axis = torch.arange(400, 4000, step=4)
-                            epoch_dir = os.path.join("pics/val", f"epoch_{epoch}")
-                            os.makedirs(epoch_dir, exist_ok=True)
-                            plt.plot(x_axis, outputs[i].detach().cpu().numpy(), color="#E8945A", label="Prediction")
-                            plt.plot(x_axis, batch.y.reshape(outputs.shape)[i].detach().cpu().numpy(), color="#5BB370", label="Ground Truth")
-                            plt.legend()
-                            plt.savefig(os.path.join(epoch_dir, f"{i}.png"))
-                            plt.close()
-                
-                avg_val_loss = val_loss / len(val_loader)
-                if best_val_loss is None or avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
-                    best_epoch = epoch
-
-                wandb.log({"epoch": epoch, "val_loss": avg_val_loss, "best_epoch": best_epoch})
-
-        # report sweep objective
-        if rank == 0:
-            wandb.log({"best_val_loss": best_val_loss})
-
-        # Clean up the process group
-        dist.destroy_process_group()
-    except Exception as e:
-        print(e)
-        dist.destroy_process_group()
+    # report sweep objective
+    wandb.log({"best_val_loss": best_val_loss})
 
 def main():
     logging.basicConfig(level=logging.INFO)
@@ -162,7 +122,7 @@ def main():
     parser.add_argument("--model_config", type=str, help="Path to the config of the model")
     parser.add_argument("--max_epochs", type=int, help="Maximum number of training epochs")
     parser.add_argument("--bs", type=int, help="Batch size")
-    parser.add_argument("--gpu_ids", type=str, default="0,1,2,3", help="Comma-separated list of GPU IDs to use")
+    parser.add_argument("--gpu_ids", type=str, help="GPU IDs")
     hparams = parser.parse_args()
     
     # Read the sweep configuration
@@ -171,13 +131,6 @@ def main():
     
     sweep_id = wandb.sweep(sweep_config, project="simg-ir")
     
-    # Validate GPU IDs against available devices
-    available_gpus = torch.cuda.device_count()
-    gpu_ids = [int(id) for id in hparams.gpu_ids.split(",")]
-    if any(gpu_id >= available_gpus for gpu_id in gpu_ids):
-        raise ValueError(f"Specified GPU IDs {gpu_ids} exceed available devices ({available_gpus})")
-    world_size = len(gpu_ids)
-
     def train_wrapper():
         # Initialize WandB and get config
         wandb.init()
@@ -187,7 +140,7 @@ def main():
             'num_ffn_layers': wandb.config.num_ffn_layers,
         }
 
-        mp.spawn(train, args=(world_size, hparams, config, gpu_ids), nprocs=world_size, join=True)
+        train(hparams, config)
     
     wandb.agent(sweep_id, function=train_wrapper, count=1000)
 
