@@ -7,7 +7,7 @@ from utils import preprocess
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, help="Type of dataset to preprocess")
-    parser.add_argument("--graphs_path", type=str, help="Path to save the PyG graphs")
+    parser.add_argument("--graphs_dir", type=str, help="Path to save the PyG graphs")
     parser.add_argument("--filename", type=str, help="Path to input data file")
     parser.add_argument("--gas_filename", type=str, help="Path to gas data file")
     parser.add_argument("--liquid_filename", type=str, help="Path to liquid data file")
@@ -17,5 +17,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     graphs = preprocess(args)
-    os.makedirs(os.path.dirname(args.graphs_path), exist_ok=True)
-    torch.save(graphs, args.graphs_path)
+    os.makedirs(os.path.dirname(args.graphs_dir), exist_ok=True)
+    torch.save(graphs, os.path.join(args.graphs_dir, "graphs.pt"))

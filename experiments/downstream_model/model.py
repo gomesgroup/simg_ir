@@ -11,106 +11,8 @@ import json
 import numpy as np
 from scipy import interpolate
 from scipy.ndimage import gaussian_filter1d
-
-def prepare_simulated(filename):
-    with open(filename, 'r') as f:
-        simulated_data = json.load(f)
-
-    # Preprocess all spectra with interpolation and Gaussian smoothing
-    new_wavenumbers = np.arange(400, 4000, 4)  # Common wavenumber grid
-    processed_spectra = {}
-
-    for data_obj in simulated_data:
-        # Get original data
-        orig_wavenumbers = np.array(data_obj['data']['wavenumber'])
-        orig_intensities = np.array(data_obj['data']['intensity'])
-        
-        # Interpolate to new grid
-        f = interpolate.interp1d(orig_wavenumbers, orig_intensities,
-                                bounds_error=False, fill_value=0)
-        new_intensities = f(new_wavenumbers)
-        
-        # Apply Gaussian smoothing with sigma=1
-        smoothed = gaussian_filter1d(new_intensities, sigma=1)
-
-        # remove negative values
-        smoothed = np.where(smoothed < 0, 0, smoothed)
-
-        # normalize by sum of intensities
-        smoothed = smoothed / np.sum(smoothed)
-        
-        # Store processed spectrum
-        processed_spectra[data_obj['smiles']] = smoothed
-    
-    return processed_spectra
-
-class GNNResModel(nn.Module):
-    def __init__(self, input_features, edge_features, out_targets, hidden_size, fcn_hidden_dim, embedding_dim,
-                 gnn_output_dim, heads):
-        super().__init__()
-        self.layers = []
-
-        last_hs = input_features
-        all_hss = 0
-
-        for hs in hidden_size:
-            self.layers += [
-                geom_nn.GATConv(last_hs, hs, edge_dim=edge_features, heads=heads, concat=False),
-                nn.ReLU(),
-            ]
-
-            last_hs = hs
-            all_hss += hs
-
-        self.layers.append(geom_nn.GCNConv(last_hs, gnn_output_dim))
-        all_hss += gnn_output_dim
-
-        self.layers = nn.ModuleList(self.layers)
-
-        self.fcn_head = nn.Sequential(
-            nn.Linear(
-                input_features + all_hss, fcn_hidden_dim
-            ),
-            nn.ReLU(),
-            nn.BatchNorm1d(fcn_hidden_dim),
-            nn.Linear(fcn_hidden_dim, embedding_dim),
-            nn.ReLU()
-        )
-
-        self.decoder = nn.Sequential(
-            nn.Linear(embedding_dim, out_targets),
-        )
-
-    def get_embedding(self, x, edge_index, edge_attr):
-        each_step = [x]
-
-        out = x
-
-        for layer in self.layers:
-            if isinstance(layer, geom_nn.MessagePassing):
-                if isinstance(layer, geom_nn.GATConv):
-                    out = layer(out, edge_index, edge_attr)
-                else:
-                    out = layer(out, edge_index)
-            else:
-                out = layer(out)
-                each_step.append(out)
-
-        each_step.append(out)
-
-        out = torch.cat(each_step, dim=1)
-        out = self.fcn_head(out)
-
-        return out
-
-    def forward(self, x, edge_index, edge_attr, batch):
-        out = self.get_embedding(x, edge_index, edge_attr)
-
-        out = geom_nn.global_mean_pool(out, batch)
-        out = self.decoder(out)
-
-        return out
-
+from rdkit import Chem
+from rdkit.Chem import AllChem
 
 class GNN(pl.LightningModule):
     def __init__(self, model_type, model_params, num_ffn_layers, target_dim, recalc_mae, lr=2e-4):
@@ -118,7 +20,6 @@ class GNN(pl.LightningModule):
         self.save_hyperparameters()
 
         model_dict = {
-            'Res': GNNResModel,
             'PNA_tg': geom_nn.PNA,
             'GAT_tg': geom_nn.GAT,
             'GCN_tg': geom_nn.GraphSAGE,
@@ -135,12 +36,12 @@ class GNN(pl.LightningModule):
             ffn_layers = []
             for _ in range(num_ffn_layers):
                 ffn_layers.append(nn.Linear(model_params['hidden_channels'], model_params['hidden_channels']))
-                ffn_layers.append(nn.BatchNorm1d(num_features=model_params['hidden_channels']))
+                ffn_layers.append(nn.BatchNorm1d(model_params['hidden_channels']))
                 ffn_layers.append(nn.ReLU())
             ffn_layers.append(nn.Linear(model_params['hidden_channels'], target_dim))
             self.ffn = nn.Sequential(*ffn_layers)
 
-        self.loss = sid
+        self.loss_fn = mse_loss
         self.recal_mae = recalc_mae
         self.best_val_loss = None
 
@@ -163,6 +64,8 @@ class GNN(pl.LightningModule):
             out = self.ffn(out)
         else:
             out = self.model(x, edge_index, edge_attr, batch)
+
+        out = torch.tanh(out)
 
         return out
 
@@ -228,18 +131,46 @@ class GNN(pl.LightningModule):
     def configure_optimizers(self):
         return Adam(self.parameters(), lr=self.hparams.lr)
 
-gas_spectra = prepare_simulated("/home/jose/simg_ir/data/simulated/gas_649.json")
+def mse_loss(preds, batch):
+    batch_size = preds.shape[0]
+    dim = preds.shape[1]
+    target = batch.y.reshape(batch_size, dim).to(preds.device)
 
-def sid(model_spectra: torch.tensor, target_spectra: torch.tensor, threshold: float = 1e-3, eps: float = 1e-8, torch_device: str = 'cpu') -> torch.tensor:
-    target_spectra = target_spectra.reshape(model_spectra.shape)
-
-    # Calculate MSE loss
-    loss = torch.square(target_spectra - model_spectra)
-    loss = torch.sum(loss, axis=1)
-    loss = loss.mean()
+    loss = torch.nn.functional.mse_loss(preds, target)
 
     return loss
 
+def focal_loss(preds, batch, gamma=2.0, threshold=0.1):
+    batch_size = preds.shape[0]
+    dim = preds.shape[1]
+    target = batch.y.reshape(batch_size, dim).to(preds.device)
+
+    error = torch.abs(preds - target)
+    scale_factor = (torch.abs(target) > threshold).float() * (error ** gamma) + (torch.abs(target) <= threshold).float()
+    loss = (scale_factor * error**2).mean()
+
+    return loss
+
+def corr_loss(preds, batch):
+    batch_size = preds.shape[0]
+    dim = preds.shape[1]
+    target = batch.y.reshape(batch_size, dim).to(preds.device)
+
+    gas_spectra = batch.gas_spectra.reshape(batch_size, dim)
+    true_liquid_spectra = batch.liquid_spectra.reshape(batch_size, dim)
+    pred_liquid_spectra = gas_spectra + preds
+
+    corrs = torch.zeros(batch_size, device=preds.device)
+    for i in range(batch_size):
+        # Stack the two vectors to create a 2×dim tensor
+        stacked = torch.stack([pred_liquid_spectra[i], true_liquid_spectra[i]])
+        # Compute correlation matrix (2×2)
+        corr_matrix = torch.corrcoef(stacked)
+        # Extract the correlation coefficient (off-diagonal element)
+        corrs[i] = corr_matrix[0, 1]
+
+    # We want to maximize correlation, so we return 1 - corr
+    return (1 - corrs).mean()
 
 def sigmoid(x):
     return 1 / (1 + torch.exp(-x))

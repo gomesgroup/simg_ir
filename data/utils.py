@@ -80,10 +80,16 @@ def prepare_difference(gas_filename, liquid_filename):
     for smiles in common_smiles:
         gas_spectrum = gas_processed_spectra[smiles]
         liquid_spectrum = liquid_processed_spectra[smiles]
+
+        # normalize by max intensity of gas spectrum
+        gas_max = np.max(gas_spectrum)
+        gas_spectrum = gas_spectrum / gas_max
+        liquid_spectrum = liquid_spectrum / gas_max
+
         difference = liquid_spectrum - gas_spectrum
         spectral_differences[smiles] = difference
 
-    return spectral_differences
+    return gas_processed_spectra, liquid_processed_spectra, spectral_differences
 
 def prepare_correlation(gas_filename, liquid_filename):
     gas_processed_spectra = prepare_simulated(gas_filename)
@@ -100,7 +106,7 @@ def prepare_correlation(gas_filename, liquid_filename):
         correlation = np.corrcoef(gas_spectrum, liquid_spectrum)[0, 1]
         spectral_correlations[smiles] = correlation
 
-    return spectral_correlations
+    return gas_processed_spectra, liquid_processed_spectra, spectral_correlations
 
 def convert2xyz(smi):
     path = uuid.uuid4().hex
@@ -154,15 +160,17 @@ def graph_to_NBO(graphs, molecular_only):
     return nbo_graphs
 
 def preprocess(args):
+    gas_spectra = None
+    liquid_spectra = None
     if args.dataset == "simulated":
         print("Preparing simulated dataset...")
         data = prepare_simulated(args.filename)
     elif args.dataset == "difference":
         print("Preparing difference dataset...")
-        data = prepare_difference(args.gas_filename, args.liquid_filename)
+        gas_spectra, liquid_spectra, data = prepare_difference(args.gas_filename, args.liquid_filename)
     elif args.dataset == "correlation":
         print("Preparing correlation dataset...")
-        data = prepare_correlation(args.gas_filename, args.liquid_filename)
+        gas_spectra, liquid_spectra, data = prepare_correlation(args.gas_filename, args.liquid_filename)
     elif args.dataset == "savoie":
         print("Preparing Savoie dataset...")
         data = prepare_savoie(args.size, args.method, args.filename)
@@ -186,11 +194,13 @@ def preprocess(args):
     for graph in tqdm(graphs):
         clean_graphs.append(
             Data(
-                x=torch.FloatTensor(graph.x[:, :17]),
+                x=torch.FloatTensor(graph.x[:, :]),
                 edge_index=torch.LongTensor(graph.edge_index),
                 edge_attr=torch.FloatTensor(graph.edge_attr),
                 smiles=graph.smiles,
                 y=torch.FloatTensor(data[graph.smiles]),
+                gas_spectra=torch.FloatTensor(gas_spectra[graph.smiles]),
+                liquid_spectra=torch.FloatTensor(liquid_spectra[graph.smiles]),
                 phase=args.phase
             )
         )
