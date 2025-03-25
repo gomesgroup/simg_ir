@@ -808,6 +808,7 @@ def construct_NBO_graph_parsed(nbo_data: Mapping, xyz_data: List[str], qm9_id: s
         a2b_index=torch.LongTensor(graph.a2b_index),
         a2b_targets=torch.FloatTensor(graph.a2b_targets),
         interaction_targets=torch.FloatTensor(graph.interaction_targets),
+        qm9_id=graph.qm9_id
     )
 
     return graph
@@ -821,7 +822,7 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
     graph: Data
         The input graph.
     molecular_only: bool, optional
-        Return molecular fraph only.
+        Return molecular graph only.
 
     Returns
     -------
@@ -830,23 +831,11 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
     """
     new_graph = Data()
 
-    # Ensure all input data is in tensor format
-    for key, value in graph.__dict__.items():
-        if isinstance(value, np.ndarray):
-            setattr(graph, key, torch.from_numpy(value))
-    
     new_graph.x = graph.x
     if molecular_only:
         new_graph.x = new_graph.x[graph.is_atom == 1]
 
     if not molecular_only:
-        # Get the original number of nodes before adding interaction nodes
-        original_num_nodes = graph.x.shape[0]
-        
-        # Compute the number of interaction nodes to be added
-        num_interaction_nodes = graph.interaction_targets.shape[0]
-        
-        # Block-diagonally add the interaction node features
         new_graph.x = block_diagonal(new_graph.x, graph.interaction_targets,
                                      new_graph.x.shape[1] + graph.interaction_targets.shape[1])
 
@@ -861,146 +850,22 @@ def convert_NBO_graph_to_downstream(graph: Data, molecular_only: Optional[bool] 
         new_graph.edge_index = new_graph.edge_index[:, edge_mask]
         new_graph.edge_attr = new_graph.edge_attr[edge_mask]
     else:
-        # Ensure tensors have the right shape (2, num_edges) before stacking
-        # For edge_index, it should already be [2, num_edges]
-        if graph.edge_index.shape[0] != 2:
-            graph.edge_index = graph.edge_index.t()
-            
-        # For a2b_index, ensure it's [2, num_a2b_edges]
-        a2b_index = graph.a2b_index
-        if a2b_index.shape[0] != 2:
-            a2b_index = a2b_index.t()
-        a2b_index_reversed = torch.stack([a2b_index[1], a2b_index[0]])
-        
-        # For interaction_edge_index, ensure it's [2, num_interaction_edges]
-        interaction_edge_index = graph.interaction_edge_index
-        if interaction_edge_index.shape[0] != 2 and interaction_edge_index.numel() > 0:
-            interaction_edge_index = interaction_edge_index.t()
-            
-        # Now stack the tensors with consistent shapes for the molecular graph
-        new_graph.edge_index = torch.cat([graph.edge_index, a2b_index, a2b_index_reversed], dim=1)
-        
-        # Create edges connecting interaction nodes to their respective molecular nodes
-        if interaction_edge_index.numel() > 0:  
-            # Create edges between interaction nodes and the molecular nodes they interact with
-            # The interaction_edge_index contains pairs of nodes that interact with each other
-            # We need to create edges from these nodes to new interaction nodes
-            
-            # First, get the original interaction edges
-            donor_indices = interaction_edge_index[0]  # Source nodes in the interaction
-            acceptor_indices = interaction_edge_index[1]  # Target nodes in the interaction
-            
-            # For each interaction, create an edge from donor to interaction node and from acceptor to interaction node
-            num_interactions = donor_indices.shape[0]
-            
-            # Create new indices for the interaction nodes
-            interaction_node_indices = torch.arange(original_num_nodes, 
-                                                  original_num_nodes + num_interactions, 
-                                                  dtype=torch.long)
-            
-            # Create edges: donor -> interaction node
-            donor_to_interaction = torch.stack([
-                donor_indices,
-                interaction_node_indices
-            ])
-            
-            # Create edges: acceptor -> interaction node
-            acceptor_to_interaction = torch.stack([
-                acceptor_indices,
-                interaction_node_indices
-            ])
-            
-            # Create edges: interaction node -> donor and interaction node -> acceptor (bidirectional)
-            interaction_to_donor = torch.stack([
-                interaction_node_indices,
-                donor_indices
-            ])
-            
-            interaction_to_acceptor = torch.stack([
-                interaction_node_indices,
-                acceptor_indices
-            ])
-            
-            # Concatenate all the edge indices
-            new_graph.edge_index = torch.cat([
-                new_graph.edge_index, 
-                donor_to_interaction, 
-                acceptor_to_interaction,
-                interaction_to_donor,
-                interaction_to_acceptor
-            ], dim=1)
-        
-        # Create edge attributes for the new edges
-        # First, handle the original edges and a2b edges
+        new_graph.edge_index = torch.hstack((graph.edge_index, graph.a2b_index.T,
+                                             torch.LongTensor(graph.a2b_index.numpy()[::-1].copy()).T))
+        new_graph.edge_index = torch.hstack((new_graph.edge_index,
+                                             graph.interaction_edge_index,
+                                             torch.LongTensor(graph.interaction_edge_index.numpy()[::-1].copy())))
+
         new_graph.edge_attr = block_diagonal(graph.edge_attr, torch.vstack([graph.a2b_targets] * 2),
                                              graph.edge_attr.shape[1] + graph.a2b_targets.shape[1])
-        
-        # Then add attributes for the interaction edges
-        if interaction_edge_index.numel() > 0:
-            # Create dummy edge attributes for the new edges connecting to interaction nodes
-            # The number of edges we added is 4 times the number of interactions
-            num_new_edges = num_interactions * 4
-            dummy_edge_attr = torch.zeros((num_new_edges, new_graph.edge_attr.shape[1]))
-            
-            # Use interaction targets as edge attributes for the new connections
-            interaction_features = graph.interaction_targets
-            
-            # Set the attributes for donor->interaction edges
-            for i in range(num_interactions):
-                # Copy interaction features to the edge attributes
-                # Adjust indices based on the positions in the concatenated edge_index tensor
-                edge_offset = graph.edge_attr.shape[0] + graph.a2b_targets.shape[0] * 2 + i * 4
-                # Fix the tensor concatenation by ensuring both tensors have the right dimensions
-                padding_size = new_graph.edge_attr.shape[1] - interaction_features.shape[1]
-                if padding_size > 0:
-                    dummy_edge_attr[i, :] = torch.cat([
-                        torch.zeros(padding_size),
-                        interaction_features[i]
-                    ])
-                else:
-                    # If padding not needed, just copy the interaction features
-                    dummy_edge_attr[i, :] = interaction_features[i, :new_graph.edge_attr.shape[1]]
-                    
-                # Copy attributes to the other three edges for this interaction
-                dummy_edge_attr[i+num_interactions, :] = dummy_edge_attr[i, :]  # For acceptor->interaction
-                dummy_edge_attr[i+2*num_interactions, :] = dummy_edge_attr[i, :]  # For interaction->donor
-                dummy_edge_attr[i+3*num_interactions, :] = dummy_edge_attr[i, :]  # For interaction->acceptor
-            
-            # Concatenate the original edge attributes with the dummy ones
-            new_graph.edge_attr = torch.cat([new_graph.edge_attr, dummy_edge_attr], dim=0)
-        else:
-            # If there are no interaction edges, keep the edge attributes as they are
-            pass
+        new_graph.edge_attr = block_diagonal(new_graph.edge_attr, torch.vstack([graph.interaction_targets] * 2),
+                                             new_graph.edge_attr.shape[1] + graph.interaction_targets.shape[1])
 
-    if not molecular_only:
-        # Create masks for different node types
-        new_graph.is_atom = torch.zeros(new_graph.x.shape[0], dtype=torch.bool)
-        new_graph.is_lp = torch.zeros(new_graph.x.shape[0], dtype=torch.bool)
-        new_graph.is_bond = torch.zeros(new_graph.x.shape[0], dtype=torch.bool)
-        new_graph.is_interaction = torch.zeros(new_graph.x.shape[0], dtype=torch.bool)
-        
-        # Copy the original type masks
-        new_graph.is_atom[:original_num_nodes] = graph.is_atom
-        new_graph.is_lp[:original_num_nodes] = graph.is_lp
-        new_graph.is_bond[:original_num_nodes] = graph.is_bond
-        
-        # Mark the interaction nodes
-        if num_interaction_nodes > 0:
-            new_graph.is_interaction[original_num_nodes:] = True
-    
-    # Make sure symbol is a list, not a tensor
-    if hasattr(graph, 'symbol'):
-        if isinstance(graph.symbol, torch.Tensor):
-            new_graph.symbol = [str(s) for s in graph.symbol.tolist()]
-        else:
-            new_graph.symbol = graph.symbol
-    
-    # Make sure smiles is a string, not a tensor
-    if hasattr(graph, 'smiles'):
-        if isinstance(graph.smiles, torch.Tensor):
-            new_graph.smiles = str(graph.smiles.item())
-        else:
-            new_graph.smiles = graph.smiles
+    new_graph.y = graph.y
+
+    new_graph.smiles = graph.smiles
+
+    new_graph.symbol = graph.symbol
 
     return new_graph
 

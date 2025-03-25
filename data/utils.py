@@ -15,7 +15,7 @@ from scipy import interpolate
 from scipy.ndimage import gaussian_filter1d
 import h5py
 
-def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
+def prepare_savoie(size=649, method="ir", filename="data/savoie_dataset.hdf5"):
     data = {}
     with h5py.File(filename, "r") as f:
         # available methods within the dataset: 'ir', 'ms', 'nmr'
@@ -34,7 +34,7 @@ def prepare_savoie(size, method="ir", filename="data/savoie_dataset.hdf5"):
         
     return data
 
-def prepare_simulated(filename):
+def prepare_medmax(filename):
     with open(filename, 'r') as f:
         simulated_data = json.load(f)
 
@@ -55,7 +55,7 @@ def prepare_simulated(filename):
         new_intensities = f(new_wavenumbers)
         
         # Apply Gaussian smoothing with sigma=1
-        smoothed = gaussian_filter1d(new_intensities, sigma=1)
+        smoothed = gaussian_filter1d(new_intensities, sigma=5)
 
         # remove negative values
         smoothed = np.where(smoothed < 0, 0, smoothed)  
@@ -68,45 +68,86 @@ def prepare_simulated(filename):
     
     return processed_spectra
 
+def prepare_max(filename):
+    with open(filename, 'r') as f:
+        simulated_data = json.load(f)
+
+    # Preprocess all spectra with interpolation and Gaussian smoothing
+    new_wavenumbers = np.arange(400, 4000, 4)  # Common wavenumber grid
+    processed_spectra = {}
+
+    for data_obj in simulated_data:
+        # Get original data
+        orig_wavenumbers = np.array(data_obj['data']['wavenumber'])
+        orig_intensities = np.array(data_obj['data']['intensity'])
+        
+        # Interpolate to new grid
+        f = interpolate.interp1d(orig_wavenumbers, orig_intensities,
+                                bounds_error=False, fill_value=0)
+        new_intensities = f(new_wavenumbers)
+        
+        # Apply Gaussian smoothing with sigma=1
+        smoothed = gaussian_filter1d(new_intensities, sigma=5)
+
+        # remove negative values
+        smoothed = np.where(smoothed < 0, 0, smoothed)  
+        
+        # Store processed spectrum
+        processed_spectra[data_obj['smiles']] = smoothed
+
+        # Scale down by max intensity
+        processed_spectra[data_obj['smiles']] = processed_spectra[data_obj['smiles']] / np.max(processed_spectra[data_obj['smiles']])
+    
+    return processed_spectra
+
 def prepare_difference(gas_filename, liquid_filename):
-    gas_processed_spectra = prepare_simulated(gas_filename)
-    liquid_processed_spectra = prepare_simulated(liquid_filename)
+    gas_prepared_spectra = prepare_medmax(gas_filename)
+    liquid_prepared_spectra = prepare_medmax(liquid_filename)
         
     # Create a dictionary to store the differences between liquid and gas spectra
     spectral_differences = {}
+    gas_processed_spectra = {}
+    liquid_processed_spectra = {}
 
     # Calculate differences for all molecules
-    common_smiles = set(gas_processed_spectra.keys()) & set(liquid_processed_spectra.keys())
+    common_smiles = set(gas_prepared_spectra.keys()) & set(liquid_prepared_spectra.keys())
     for smiles in common_smiles:
-        gas_spectrum = gas_processed_spectra[smiles]
-        liquid_spectrum = liquid_processed_spectra[smiles]
+        gas_spectrum = gas_prepared_spectra[smiles]
+        liquid_spectrum = liquid_prepared_spectra[smiles]
 
         # normalize by max intensity of gas spectrum
         gas_max = np.max(gas_spectrum)
         gas_spectrum = gas_spectrum / gas_max
         liquid_spectrum = liquid_spectrum / gas_max
 
+        # calculate difference
         difference = liquid_spectrum - gas_spectrum
+
+        # store processed spectra
+        gas_processed_spectra[smiles] = gas_spectrum
+        liquid_processed_spectra[smiles] = liquid_spectrum
         spectral_differences[smiles] = difference
 
     return gas_processed_spectra, liquid_processed_spectra, spectral_differences
 
-def prepare_correlation(gas_filename, liquid_filename):
-    gas_processed_spectra = prepare_simulated(gas_filename)
-    liquid_processed_spectra = prepare_simulated(liquid_filename)
-        
+def prepare_both(gas_filename, liquid_filename):
+    gas_prepared_spectra = prepare_max(gas_filename)
+    liquid_prepared_spectra = prepare_max(liquid_filename)
+
     # Create a dictionary to store the differences between liquid and gas spectra
-    spectral_correlations = {}
+    both_spectra = {}
+    common_smiles = set(gas_prepared_spectra.keys()) & set(liquid_prepared_spectra.keys())
 
-    # Calculate differences for all molecules
-    common_smiles = set(gas_processed_spectra.keys()) & set(liquid_processed_spectra.keys())
     for smiles in common_smiles:
-        gas_spectrum = gas_processed_spectra[smiles]
-        liquid_spectrum = liquid_processed_spectra[smiles]
-        correlation = np.corrcoef(gas_spectrum, liquid_spectrum)[0, 1]
-        spectral_correlations[smiles] = correlation
+        gas_spectrum = gas_prepared_spectra[smiles]
+        liquid_spectrum = liquid_prepared_spectra[smiles]
+        
+        gas_spectra = gas_spectrum / np.max(gas_spectrum)
+        liquid_spectra = liquid_spectrum / np.max(liquid_spectrum)
 
-    return gas_processed_spectra, liquid_processed_spectra, spectral_correlations
+        both_spectra[smiles] = np.concatenate([gas_spectra, liquid_spectra], axis=0)
+
+    return both_spectra
 
 def convert2xyz(smi):
     path = uuid.uuid4().hex
@@ -164,16 +205,19 @@ def preprocess(args):
     liquid_spectra = None
     if args.dataset == "simulated":
         print("Preparing simulated dataset...")
-        data = prepare_simulated(args.filename)
+        data = prepare_max(args.filename)
     elif args.dataset == "difference":
         print("Preparing difference dataset...")
         gas_spectra, liquid_spectra, data = prepare_difference(args.gas_filename, args.liquid_filename)
-    elif args.dataset == "correlation":
-        print("Preparing correlation dataset...")
-        gas_spectra, liquid_spectra, data = prepare_correlation(args.gas_filename, args.liquid_filename)
+    elif args.dataset == "both":
+        print("Preparing both dataset...")
+        data = prepare_both(args.gas_filename, args.liquid_filename)
+    elif args.dataset == "max":
+        print("Preparing max dataset...")
+        data = prepare_max(args.filename)
     elif args.dataset == "savoie":
         print("Preparing Savoie dataset...")
-        data = prepare_savoie(args.size, args.method, args.filename)
+        data = prepare_savoie()
     else:
         raise ValueError(f"Invalid dataset: {args.dataset}")
 
@@ -199,8 +243,9 @@ def preprocess(args):
                 edge_attr=torch.FloatTensor(graph.edge_attr),
                 smiles=graph.smiles,
                 y=torch.FloatTensor(data[graph.smiles]),
-                gas_spectra=torch.FloatTensor(gas_spectra[graph.smiles]),
-                liquid_spectra=torch.FloatTensor(liquid_spectra[graph.smiles]),
+                symbol=graph.symbol,
+                # gas_spectra=torch.FloatTensor(gas_spectra[graph.smiles]),
+                # liquid_spectra=torch.FloatTensor(liquid_spectra[graph.smiles]),
                 phase=args.phase
             )
         )

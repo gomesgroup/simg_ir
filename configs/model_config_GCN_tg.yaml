@@ -1,5 +1,5 @@
 lr: 0.0002
-model_type: GCN_tg
+model_type: GAT_tg
 target_dim: 900
 num_ffn_layers: 2
 model_params:

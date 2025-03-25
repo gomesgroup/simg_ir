@@ -17,5 +17,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     graphs = preprocess(args)
-    os.makedirs(os.path.dirname(args.graphs_dir), exist_ok=True)
+    os.makedirs(args.graphs_dir, exist_ok=True)
     torch.save(graphs, os.path.join(args.graphs_dir, "graphs.pt"))

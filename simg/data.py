@@ -1,8 +1,9 @@
 import uuid
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 
 
 def sort_nodes(connectivity):
@@ -108,14 +109,14 @@ def get_atom_atom_edges(connectivity: List[Tuple[int, int, int]]) -> List[Tuple[
     return edges
 
 
-def block_diagonal(a: np.ndarray, b: np.ndarray, n_features: int, default: Optional[float] = 0):
+def block_diagonal(a, b, n_features: int, default: Optional[float] = 0):
     """Constructs a block diagonal matrix from two matrices.
 
     Parameters
     ----------
-    a: np.ndarray
+    a: Union[np.ndarray, torch.Tensor]
         First matrix.
-    b: np.ndarray
+    b: Union[np.ndarray, torch.Tensor]
         Second matrix.
     n_features: int
         Number of features == number of columns in the output matrix.
@@ -124,13 +125,36 @@ def block_diagonal(a: np.ndarray, b: np.ndarray, n_features: int, default: Optio
 
     Returns
     -------
-    np.ndarray
-        Block diagonal matrix.
+    Union[np.ndarray, torch.Tensor]
+        Block diagonal matrix. Returns a torch.Tensor if either input is a torch.Tensor.
     """
-    out = np.zeros((a.shape[0] + b.shape[0], n_features)) + default
-    out[:a.shape[0], :a.shape[1]] = a
-
-    if b.shape[0] != 0:
-        out[a.shape[0]:, a.shape[1]:] = b
+    # Determine if we should return a torch tensor
+    use_torch = isinstance(a, torch.Tensor) or isinstance(b, torch.Tensor)
+    
+    # Convert inputs to torch tensors if needed
+    if use_torch:
+        if not isinstance(a, torch.Tensor):
+            a = torch.from_numpy(a) if isinstance(a, np.ndarray) else torch.tensor(a)
+        if not isinstance(b, torch.Tensor):
+            b = torch.from_numpy(b) if isinstance(b, np.ndarray) else torch.tensor(b)
+        
+        # Create torch output
+        out = torch.zeros((a.shape[0] + b.shape[0], n_features), dtype=a.dtype)
+        if default != 0:
+            out = out + default
+            
+        # Fill the blocks
+        out[:a.shape[0], :a.shape[1]] = a
+        
+        if b.shape[0] != 0:
+            out[a.shape[0]:, a.shape[1]:] = b
+            
+    else:
+        # Original numpy implementation
+        out = np.zeros((a.shape[0] + b.shape[0], n_features)) + default
+        out[:a.shape[0], :a.shape[1]] = a
+        
+        if b.shape[0] != 0:
+            out[a.shape[0]:, a.shape[1]:] = b
 
     return out
