@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Molecular Graph Visualization</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Add Chart.js library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Add Chart.js Annotations plugin -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+    <!-- Add D3.js for interactive graph visualization -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .visualization-container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        .controls-container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .result-image {
+            width: 100%;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 1000;
+        }
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+        }
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            z-index: 999;
+        }
+        .spectrum-container {
+            position: relative;
+            margin-top: 20px;
+        }
+        .spectrum-slider-container {
+            margin-top: 5px;
+            padding: 0 10px;
+        }
+        #spectrum-canvas {
+            width: 100%;
+            max-height: 250px;
+            height: 300px;
+        }
+        #spectrum-wavenumber-slider {
+            width: 100%;
+            margin-top: 5px;
+        }
+        #molecule-svg {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        #molecule-image {
+            width: 100%;
+            max-height: 500px;
+            object-fit: contain;
+        }
+        .graph-toggle {
+            margin-bottom: 10px;
+        }
+        #d3-container {
+            margin-top: 10px;
+        }
+        .vertical-line-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        #vertical-line {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            width: 2px;
+            background-color: red;
+            pointer-events: none;
+        }
+        #vertical-line-label {
+            position: absolute;
+            top: 10px;
+            transform: translateX(-50%);
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-size: 12px;
+            color: red;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row">
+            <div class="col-12">
+                <h1 class="my-4 text-center">Molecular Graph Visualization with Node Importance</h1>
+                <p class="text-center">Visualize molecular graphs and highlight nodes with the biggest effect at specific wavenumber positions.</p>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-4">
+                <div class="controls-container">
+                    <h3>Controls</h3>
+                    <form id="visualization-form">
+                        <div class="mb-3">
+                            <label for="graph-selector" class="form-label">Molecule Index:</label>
+                            <input type="number" class="form-control" id="graph-selector" min="0" max="{{ graph_count - 1 }}" value="0">
+                            <small class="text-muted">Select a molecule from the test set (0-{{ graph_count - 1 }})</small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="top-nodes" class="form-label">Top Influential Nodes:</label>
+                            <input type="number" class="form-control" id="top-nodes" min="1" max="10" value="5">
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary w-100 mt-2">Update Visualization</button>
+                    </form>
+                    
+                    <hr>
+                    
+                    <div class="molecule-info mt-4">
+                        <h4>Molecule Information</h4>
+                        <p><strong>SMILES:</strong> <span id="smiles-display">-</span></p>
+                        <p><strong>Selected Wavenumber:</strong> <span id="selected-wavenumber">1500</span> cm⁻¹</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8">
+                <div class="visualization-container">
+                    <h3>IR Spectrum</h3>
+                    <div class="spectrum-container">
+                        <canvas id="spectrum-canvas"></canvas>
+                        <!-- Custom vertical line overlay -->
+                        <div class="vertical-line-container">
+                            <div id="vertical-line"></div>
+                            <div id="vertical-line-label">1500 cm⁻¹</div>
+                        </div>
+                        <div class="spectrum-slider-container">
+                            <input type="range" class="form-range" id="spectrum-wavenumber-slider" min="400" max="3996" step="4" value="1500">
+                        </div>
+                    </div>
+                    
+                    <h3 class="mt-4">Molecular Graph</h3>
+                    <div id="molecule-container">
+                        <!-- Interactive D3 visualization -->
+                        <svg id="molecule-svg"></svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="overlay" id="loading-overlay">
+        <div class="loading">
+            <div class="spinner-border text-light" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="text-light mt-2">Generating visualization...</p>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('visualization-form');
+            const spectrumWavenumberSlider = document.getElementById('spectrum-wavenumber-slider');
+            const selectedWavenumber = document.getElementById('selected-wavenumber');
+            const smilesDisplay = document.getElementById('smiles-display');
+            const loadingOverlay = document.getElementById('loading-overlay');
+            
+            // Get elements for custom vertical line
+            const verticalLine = document.getElementById('vertical-line');
+            const verticalLineLabel = document.getElementById('vertical-line-label');
+            const spectrumContainer = document.querySelector('.spectrum-container');
+            
+            // Spectrum chart setup
+            let spectrumChart = null;
+            const spectrumCtx = document.getElementById('spectrum-canvas').getContext('2d');
+            
+            // Function to position the vertical line
+            function updateVerticalLine(wavenumber) {
+                // Update the displayed wavenumber
+                selectedWavenumber.textContent = wavenumber;
+                verticalLineLabel.textContent = wavenumber + ' cm⁻¹';
+                
+                if (!spectrumChart) return;
+                
+                // Get chart dimensions and scaling
+                const chartArea = spectrumChart.chartArea;
+                const xScale = spectrumChart.scales.x;
+                
+                // Find the array index for this wavenumber in the x-axis data
+                const xAxisData = spectrumChart.data.labels;
+                const wavenumberIndex = xAxisData.findIndex(x => x >= wavenumber);
+                
+                // Calculate position based on chart area and data range
+                let xPosition;
+                
+                if (wavenumberIndex >= 0) {
+                    const leftValue = xAxisData[Math.max(0, wavenumberIndex - 1)];
+                    const rightValue = xAxisData[wavenumberIndex];
+                    const leftPixel = xScale.getPixelForValue(leftValue);
+                    const rightPixel = xScale.getPixelForValue(rightValue);
+                    
+                    // Interpolate between the points
+                    const ratio = (wavenumber - leftValue) / (rightValue - leftValue);
+                    xPosition = leftPixel + ratio * (rightPixel - leftPixel);
+                } else {
+                    // Fallback if value isn't in range
+                    xPosition = xScale.getPixelForValue(wavenumber);
+                }
+                
+                // Enforce limits to keep the line within the chart area
+                xPosition = Math.max(chartArea.left, Math.min(chartArea.right, xPosition));
+                
+                // Position the line and label
+                verticalLine.style.left = xPosition + 'px';
+                verticalLineLabel.style.left = xPosition + 'px';
+            }
+            
+            // Function to create/update the spectrum chart
+            function updateSpectrumChart(spectrumData, wavenumber) {
+                const xAxis = spectrumData.x_axis;
+                const prediction = spectrumData.prediction;
+                const groundTruth = spectrumData.ground_truth;
+                
+                // If chart already exists, destroy it first
+                if (spectrumChart) {
+                    spectrumChart.destroy();
+                }
+                
+                // Create new chart
+                spectrumChart = new Chart(spectrumCtx, {
+                    type: 'line',
+                    data: {
+                        labels: xAxis,
+                        datasets: [
+                            {
+                                label: 'Prediction',
+                                data: prediction,
+                                borderColor: '#E8945A',
+                                backgroundColor: 'rgba(232, 148, 90, 0.1)',
+                                borderWidth: 2,
+                                pointRadius: 0,  // Hide points to make continuous lines
+                                tension: 0
+                            },
+                            {
+                                label: 'Ground Truth',
+                                data: groundTruth,
+                                borderColor: '#5BB370',
+                                backgroundColor: 'rgba(91, 179, 112, 0.1)',
+                                borderWidth: 2,
+                                pointRadius: 0,  // Hide points to make continuous lines
+                                tension: 0
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false
+                        },
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Wavenumber (cm⁻¹)'
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Intensity'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top'
+                            },
+                            title: {
+                                display: true,
+                                text: 'IR Spectrum Comparison'
+                            }
+                        }
+                    }
+                });
+                
+                // After chart is created, position the vertical line
+                // Need a short delay to allow chart to render
+                setTimeout(() => {
+                    updateVerticalLine(wavenumber);
+                }, 100);
+            }
+            
+            // D3.js Molecular graph visualization
+            function renderMoleculeD3(graphData, nodeImportance) {
+                // Clear previous visualization
+                d3.select("#molecule-svg").html("");
+                
+                const svg = d3.select("#molecule-svg");
+                const width = svg.node().getBoundingClientRect().width;
+                const height = svg.node().getBoundingClientRect().height;
+                
+                // Create main group for centering and scaling
+                const g = svg.append("g");
+                
+                // Extract nodes and edges for convenience
+                const nodes = graphData.nodes;
+                const links = graphData.edges;
+                
+                // Group nodes by type
+                const atomNodes = nodes.filter(d => d.type === 'atom');
+                const bondNodes = nodes.filter(d => d.type === 'bond');
+                const lonePairNodes = nodes.filter(d => d.type === 'lone_pair');
+                
+                // Scale the graph to fit the SVG
+                const xValues = nodes.map(d => d.x);
+                const yValues = nodes.map(d => d.y);
+                const xMin = Math.min(...xValues);
+                const xMax = Math.max(...xValues);
+                const yMin = Math.min(...yValues);
+                const yMax = Math.max(...yValues);
+                
+                const xRange = xMax - xMin;
+                const yRange = yMax - yMin;
+                const padding = 50; // Padding from the edges
+                
+                // Create scale functions
+                const xScale = d3.scaleLinear()
+                    .domain([xMin - (xRange * 0.1), xMax + (xRange * 0.1)])
+                    .range([padding, width - padding]);
+                
+                const yScale = d3.scaleLinear()
+                    .domain([yMin - (yRange * 0.1), yMax + (yRange * 0.1)])
+                    .range([padding, height - padding]);
+                
+                // Node color based on type
+                const nodeColor = d => {
+                    if (d.type === 'atom') return '#1f78b4';
+                    if (d.type === 'bond') return '#33a02c';
+                    if (d.type === 'lone_pair') return '#ff7f00';
+                    return 'gray';
+                };
+                
+                // Node size based on type and importance
+                const nodeSize = d => {
+                    let baseSize;
+                    if (d.type === 'atom') baseSize = 25;
+                    else if (d.type === 'bond') baseSize = 15;
+                    else baseSize = 12;
+                    
+                    return d.highlighted ? baseSize * 1.5 : baseSize;
+                };
+                
+                // Node shape based on type
+                const nodeShape = d => {
+                    if (d.type === 'atom') return d3.symbolCircle;
+                    if (d.type === 'bond') return d3.symbolSquare;
+                    if (d.type === 'lone_pair') return d3.symbolDiamond;
+                    return d3.symbolCircle;
+                };
+                
+                // Create links
+                g.selectAll(".link")
+                    .data(links)
+                    .enter()
+                    .append("line")
+                    .attr("class", "link")
+                    .attr("x1", d => xScale(nodes.find(n => n.id === d.source).x))
+                    .attr("y1", d => yScale(nodes.find(n => n.id === d.source).y))
+                    .attr("x2", d => xScale(nodes.find(n => n.id === d.target).x))
+                    .attr("y2", d => yScale(nodes.find(n => n.id === d.target).y))
+                    .style("stroke", "blue")
+                    .style("stroke-width", 2)
+                    .style("opacity", 0.8);
+                
+                // Debug: Console log all lone pair nodes to verify positioning
+                console.log("Lone pair nodes:", lonePairNodes);
+                
+                // Create node groups
+                function createNodeGroup(nodeData, className) {
+                    return g.selectAll("." + className)
+                        .data(nodeData)
+                        .enter()
+                        .append("g")
+                        .attr("class", "node " + className)
+                        .attr("transform", d => `translate(${xScale(d.x)}, ${yScale(d.y)})`);
+                }
+                
+                // Create nodes by type to control render order
+                const bondNodeGroup = createNodeGroup(bondNodes, "bond-node");
+                const lonePairNodeGroup = createNodeGroup(lonePairNodes, "lone-pair-node");
+                const atomNodeGroup = createNodeGroup(atomNodes, "atom-node");
+                
+                // Add node shapes for each type
+                function addNodeShapes(nodeGroup) {
+                    nodeGroup.append("path")
+                        .attr("d", d => d3.symbol().type(nodeShape(d)).size(nodeSize(d) * 30)())
+                        .style("fill", d => d.highlighted ? "red" : nodeColor(d))
+                        .style("opacity", 0.9)
+                        .style("stroke", "white")
+                        .style("stroke-width", 1.5);
+                }
+                
+                // Add shapes for each node type
+                addNodeShapes(bondNodeGroup);
+                addNodeShapes(lonePairNodeGroup);
+                addNodeShapes(atomNodeGroup);
+                
+                // Add atom labels (after all nodes to ensure they're on top)
+                atomNodeGroup
+                    .append("text")
+                    .text(d => d.label)
+                    .attr("dy", ".35em")
+                    .attr("text-anchor", "middle")
+                    .style("fill", "black")
+                    .style("font-size", "12px")
+                    .style("font-weight", "bold");
+                
+                // Add hover effects
+                function addHoverEffects(nodeGroup) {
+                    nodeGroup.on("mouseover", function(event, d) {
+                        d3.select(this).select("path")
+                            .style("stroke", "black")
+                            .style("stroke-width", 2);
+                        
+                        // Show tooltip with information
+                        const tooltip = svg.append("g")
+                            .attr("class", "tooltip")
+                            .attr("transform", `translate(${xScale(d.x)}, ${yScale(d.y) - 30})`);
+                        
+                        tooltip.append("rect")
+                            .attr("x", -60)
+                            .attr("y", -20)
+                            .attr("width", 120)
+                            .attr("height", 20)
+                            .attr("rx", 5)
+                            .attr("ry", 5)
+                            .style("fill", "white")
+                            .style("stroke", "black");
+                        
+                        tooltip.append("text")
+                            .attr("text-anchor", "middle")
+                            .attr("dy", "-5")
+                            .text(`Importance: ${d.importance.toFixed(5)}`)
+                            .style("font-size", "10px");
+                    })
+                    .on("mouseout", function() {
+                        d3.select(this).select("path")
+                            .style("stroke", "white")
+                            .style("stroke-width", 1.5);
+                        
+                        svg.select(".tooltip").remove();
+                    });
+                }
+                
+                // Add hover effects to all node groups
+                addHoverEffects(bondNodeGroup);
+                addHoverEffects(lonePairNodeGroup);
+                addHoverEffects(atomNodeGroup);
+                
+                // Add legend
+                const legendData = [
+                    { type: "atom", label: "Atom" },
+                    { type: "bond", label: "Bond" },
+                    { type: "lone_pair", label: "Lone Pair" },
+                    { type: "highlighted", label: "Top Influential Nodes" }
+                ];
+                
+                const legend = svg.append("g")
+                    .attr("class", "legend")
+                    .attr("transform", `translate(${width - 130}, 20)`);
+                
+                const legendItems = legend.selectAll(".legend-item")
+                    .data(legendData)
+                    .enter()
+                    .append("g")
+                    .attr("class", "legend-item")
+                    .attr("transform", (d, i) => `translate(0, ${i * 20})`);
+                
+                legendItems.append("path")
+                    .attr("d", d => {
+                        let symbol;
+                        if (d.type === "atom") symbol = d3.symbolCircle;
+                        else if (d.type === "bond") symbol = d3.symbolSquare;
+                        else if (d.type === "lone_pair") symbol = d3.symbolDiamond;
+                        else symbol = d3.symbolCircle;
+                        return d3.symbol().type(symbol).size(200)();
+                    })
+                    .attr("transform", "translate(10, 0)")
+                    .style("fill", d => {
+                        if (d.type === "highlighted") return "red";
+                        return nodeColor({ type: d.type });
+                    });
+                
+                legendItems.append("text")
+                    .attr("x", 25)
+                    .attr("y", 5)
+                    .text(d => d.label)
+                    .style("font-size", "12px")
+                    .style("fill", "black");
+            }
+            
+            // Update the vertical line position when slider changes
+            spectrumWavenumberSlider.addEventListener('input', function() {
+                const wavenumber = parseInt(this.value);
+                updateVerticalLine(wavenumber);
+            });
+            
+            // Handle form submission
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                // Show loading overlay
+                loadingOverlay.style.display = 'block';
+                
+                // Get form values
+                const graphIdx = document.getElementById('graph-selector').value;
+                const wavenumber = spectrumWavenumberSlider.value;
+                const topNodes = document.getElementById('top-nodes').value;
+                
+                // Create form data
+                const formData = new FormData();
+                formData.append('graph_idx', graphIdx);
+                formData.append('wavenumber', wavenumber);
+                formData.append('top_n_nodes', topNodes);
+                
+                // Send request to server
+                fetch('/get_visualization', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Update SMILES display
+                    smilesDisplay.textContent = data.smiles;
+                    
+                    // Update spectrum chart
+                    updateSpectrumChart(data.spectrum_data, parseInt(wavenumber));
+                    
+                    // Render the interactive D3 visualization
+                    renderMoleculeD3(data.graph_data, data.node_importance);
+                    
+                    // Hide loading overlay
+                    loadingOverlay.style.display = 'none';
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while generating the visualization.');
+                    loadingOverlay.style.display = 'none';
+                });
+            });
+            
+            // Initial fetch to load the first visualization
+            form.dispatchEvent(new Event('submit'));
+        });
+    </script>
+</body>
+</html> 
